@@ -8,8 +8,7 @@
 - AE2 **19.2.13**（本项目实际构建、测试版本），以及 AE2 要求的 GuideME；开发环境使用 GuideME **21.1.1**。
 - 将 `build/libs/aeautopatterns-1.0.0.jar` 放入客户端和服务端的 `mods` 文件夹。
 - 不兼容 Fabric / Forge 版本；当前声明的 AE2 兼容范围是 `[19.2.13,19.3)`。
-- 第三方模组如何声明并引用本项目 API 见 [INTEROP_PROTOCOL.md](INTEROP_PROTOCOL.md)。可选联动模组不会成为硬依赖。
-- Java 源码采用 LGPL-3.0-or-later；模型、贴图、GUI 和设计文件暂不授予独立再利用许可，见 [ART_ASSETS_NOTICE.md](ART_ASSETS_NOTICE.md)。第三方项目、许可证、版权和资源来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- Java 源码采用 LGPL-3.0-or-later。第三方依赖与上游来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；可选联动模组不会成为硬依赖。
 
 ## 操作
 
@@ -17,7 +16,7 @@
 
 多配方选择：同一材料具有多个工作台、切石机或锻造台配方 ID 时，分析会将该分支标为“待选择配方”，继续分析其他独立分支。点击标记材料即可打开 3×3 配方预览，用左右箭头翻页，点击“确认配方”应用路线并重新分析；取消保留待选状态。所有待选材料确认或手动设为外部供应后，才允许开始编码。标签原料候选不算多个配方，处理配方不触发这一选择步骤；网络或输出栏已有样板仍优先复用。已确认的循环路线会报告问题，不会静默改为外部供应。选择随终端保存，重载后重新分析时检查有效性。
 
-分析优化：使用增量 AND/OR 候选图、迭代 SCC 循环分组和可行性传播，为多路线/标签优先选择可行候选；单路线图跳过不必要的 SCC/传播。修改一个材料时，按全部候选边反向失效，只重新查询受影响材料，复用其余候选、连通分量、可行性和已验证子树。所有终端共用默认 4ms/tick 预算，单终端约 2ms/tick，轮转调度；单次适配器、JEI 或编码调用不能被抢占。内置索引按世界与设置共享，第三方适配器保持独立。算法边界和基准见 [ANALYSIS_PERFORMANCE.md](ANALYSIS_PERFORMANCE.md)。
+分析采用增量候选图、循环分组和可行性传播；修改路线时只重新分析受影响的材料。服务端以共享时间预算分步执行，JEI 只提供候选排序建议，不作为配方数据来源。
 
 1. 合成或使用 `/give @s aeautopatterns:auto_pattern_terminal` 获取终端 Part；对 ME 线缆侧面使用它来安装。
 2. 放置终端，通过 ME 线缆接入有供电、可用频道的网络。终端占用一个频道，待机耗电 1 AE/t。
@@ -43,6 +42,8 @@
 `integration` 提供统一的 `AdaptedRecipe`、`StackSpec`、`ChanceOutput` 和 `MachineRequirements` 模型。输入输出均使用 AE `GenericStack`，因此可同时表达物品、流体、精确数量、多确定输出、催化剂/容器/返还物和机器条件。`GenericProcessingAdapter` 会生成一张包含全部确定输出的 AE 处理样板；概率副产物不写入确定输出，只进入样板 Lore 和终端详情。无法可靠解析的动态配方保持为“不支持”。
 
 第三方机器通过 `RecipeAdapterProvider` 使用 Java `ServiceLoader` 注册，声明 `adapterId`、优先级并返回适配器。适配器负责索引、候选解析、验证、编码和说明；`AdapterRegistry` 负责与内置适配器组合，单个外部适配器异常不会阻断其他路线。机器燃料、能量、温度、压力和等级只作为条件提示，需玩家在网络外配置。
+
+第三方模组应在 `neoforge.mods.toml` 中将 `aeautopatterns` 声明为可选依赖，并使用 `compileOnly` 引用本模组 API；未安装本模组时不得直接加载适配器实现类。
 
 适配器还可提供能力声明（物品/流体、多输入、多输出、概率、催化剂等），终端只展示服务端解析结果。数据包可在 `data/<namespace>/aeautopatterns/adapter/*.json` 声明机器类型、配方类型和字段路径；声明本身不会猜测配方，复杂配方仍须 Java `RecipeAdapterProvider`。示例见 `data/aeautopatterns/adapter/example_machine.json`。
 
@@ -116,8 +117,8 @@ JEI 仅为服务端已验证配方提供推荐顺序。每批 32 个键、最多
 .\gradlew.bat runClient
 ```
 
-构建结果位于 `build/libs/`。`src/gameTest` 和 `src/test` 不包含在发布 JAR 中。验证范围及未验证项目见 [VALIDATION.md](VALIDATION.md)。
+构建结果位于 `build/libs/`。`src/gameTest` 和 `src/test` 不包含在发布 JAR 中。
 
 代码按 `part`、`client`、`menu`、`network`、`logic`、`integration` 划分。`integration/RecipeAdapter` 是后续机器配方适配入口；当前适配器覆盖工作台、标准切石机、锻造升级及按具体目标匹配的盔甲纹饰。其他模组的配方子类和可解析工作台包装实现可参与递归，特殊机器和隐藏/动态原料仍需适配。DGmodules 仅作目录组织参考，未复用实现。
 
-终端采用 AE Part 风格的 `display_base` 外框和独立面板状态层；安装在 ME 线缆侧面后沿用 AE 的频道、供电、拆卸和朝向逻辑。面板亮度层使用 AE CableBus 的 tint index，因此会随对应颜色线缆显示颜色。模型和贴图属于未授予独立再利用许可的资源，详见 [ART_ASSETS_NOTICE.md](ART_ASSETS_NOTICE.md)。
+终端采用 AE Part 风格的 `display_base` 外框和独立面板状态层；安装在 ME 线缆侧面后沿用 AE 的频道、供电、拆卸和朝向逻辑。面板亮度层使用 AE CableBus 的 tint index，因此会随对应颜色线缆显示颜色。

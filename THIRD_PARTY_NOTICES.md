@@ -38,7 +38,7 @@ The applicable license terms for an optional integration are provided by that mo
 
 ## Original assets in this repository
 
-The following resources are AE Auto Patterns assets created for this project. They are included in the mod distribution, but are not licensed for independent reuse; see `ART_ASSETS_NOTICE.md`:
+The following resources are AE Auto Patterns assets created for this project and are included in the mod distribution:
 
 - `src/main/resources/assets/aeautopatterns/models/part/auto_pattern_terminal_on.json`
 - `src/main/resources/assets/aeautopatterns/models/part/auto_pattern_terminal_off.json`
@@ -49,13 +49,11 @@ The following resources are AE Auto Patterns assets created for this project. Th
 - `src/main/resources/assets/aeautopatterns/textures/part/auto_pattern_terminal_dark.png`
 - `src/main/resources/assets/aeautopatterns/textures/gui/terminal.png`
 
-The model was authored for this project and uses AE2 model parents at runtime
-where declared in the JSON. The `credit` field in the item model identifies
-AE2 display geometry. AE2-derived portions remain under AE2's LGPL-3.0 license;
-the project's original panel textures and other original artwork remain
-reserved under `ART_ASSETS_NOTICE.md`. AE2 parent models and textures are not
-copied or relicensed here.
+The model uses AE2 model parents at runtime where declared in the JSON. The
+`credit` field in the item model identifies AE2 display geometry. AE2-derived
+portions remain under AE2's LGPL-3.0 license. AE2 parent models and textures
+are not copied or relicensed here.
 
 ## Project license
 
-Original Java source code is distributed under LGPL-3.0-or-later in `LICENSE`. Artwork and other non-code resources are excluded from that license; see `ART_ASSETS_NOTICE.md`.
+Original Java source code is distributed under LGPL-3.0-or-later in `LICENSE`. No separate license is provided here for project artwork and other non-code resources.
