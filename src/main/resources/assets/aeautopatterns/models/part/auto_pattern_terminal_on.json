@@ -1,0 +1,8 @@
+{
+  "parent": "ae2:part/crafting_terminal_on",
+  "textures": {
+    "lightsBright": "aeautopatterns:part/auto_pattern_terminal_bright",
+    "lightsMedium": "aeautopatterns:part/auto_pattern_terminal_medium",
+    "lightsDark": "aeautopatterns:part/auto_pattern_terminal_dark"
+  }
+}

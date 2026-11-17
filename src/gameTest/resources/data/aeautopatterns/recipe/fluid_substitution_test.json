@@ -1,0 +1,5 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [{"item": "minecraft:water_bucket"}, {"item": "minecraft:dirt"}],
+  "result": {"id": "minecraft:barrier", "count": 1}
+}

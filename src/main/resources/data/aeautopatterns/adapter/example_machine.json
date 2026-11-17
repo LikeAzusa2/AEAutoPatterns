@@ -1,0 +1,10 @@
+{
+  "adapter_id": "example:machine",
+  "machine_type": "example:machine",
+  "priority": 0,
+  "recipe_types": ["example:machine"],
+  "input_paths": ["ingredients", "inputs"],
+  "output_paths": ["result", "results"],
+  "fluid_paths": ["fluid_inputs", "fluid_outputs"],
+  "condition_paths": ["energy", "temperature", "pressure"]
+}

@@ -1,0 +1,35 @@
+{
+  "textures": {
+    "screen": "aeautopatterns:part/auto_pattern_terminal"
+  },
+  "elements": [
+    {
+      "from": [
+        4,
+        4,
+        0.01
+      ],
+      "to": [
+        12,
+        12,
+        0.02
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            4,
+            4,
+            12,
+            12
+          ],
+          "texture": "#screen",
+          "tintindex": 1,
+          "neoforge_data": {
+            "block_light": 15,
+            "sky_light": 15
+          }
+        }
+      }
+    }
+  ]
+}

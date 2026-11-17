@@ -1,0 +1,29 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "IGI",
+    "PEP",
+    "ICI"
+  ],
+  "key": {
+    "I": {
+      "item": "minecraft:iron_ingot"
+    },
+    "G": {
+      "item": "minecraft:glass"
+    },
+    "P": {
+      "item": "ae2:calculation_processor"
+    },
+    "E": {
+      "item": "ae2:engineering_processor"
+    },
+    "C": {
+      "item": "ae2:fluix_crystal"
+    }
+  },
+  "result": {
+    "id": "aeautopatterns:auto_pattern_terminal",
+    "count": 1
+  }
+}
