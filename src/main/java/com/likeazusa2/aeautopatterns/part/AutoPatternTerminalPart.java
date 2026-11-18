@@ -87,6 +87,8 @@ import org.slf4j.LoggerFactory;
 
 public final class AutoPatternTerminalPart extends AbstractTerminalPart {
    public static final int OUTPUT_PATTERN_SLOTS = 54;
+   /** User-facing processing pattern generation is temporarily disabled. */
+   public static final boolean PROCESSING_GENERATION_AVAILABLE = false;
    private static final Set<AutoPatternTerminalPart> ACTIVE = Collections.newSetFromMap(new IdentityHashMap<>());
    @PartModels
    public static final ResourceLocation MODEL_OFF = ResourceLocation.fromNamespaceAndPath("aeautopatterns", "part/auto_pattern_terminal_off");

@@ -298,7 +298,14 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
       this.treeButton.active = ((AutoPatternMenu)this.menu).view.getBoolean("treeReady");
       this.ignoreComponents
          .setMessage(this.tr(((AutoPatternMenu)this.menu).view.getBoolean("ignoreTargetComponents") ? "ignore_components.on" : "ignore_components.off"));
-      this.processing.setMessage(this.tr(((AutoPatternMenu)this.menu).view.getBoolean("allowProcessing") ? "processing.on" : "processing.off"));
+      this.processing.setMessage(
+         this.tr(
+            AutoPatternTerminalPart.PROCESSING_GENERATION_AVAILABLE
+               ? (((AutoPatternMenu)this.menu).view.getBoolean("allowProcessing") ? "processing.on" : "processing.off")
+               : "processing.unavailable"
+         )
+      );
+      this.processing.active = AutoPatternTerminalPart.PROCESSING_GENERATION_AVAILABLE;
       this.autoUpload.setMessage(this.tr(((AutoPatternMenu)this.menu).view.getBoolean("autoUpload") ? "upload.on" : "upload.off"));
       this.uploadTarget.setMessage(this.tr("upload.target"));
       this.uploadTarget.active = true;
@@ -315,6 +322,14 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
 
    private void panel(GuiGraphics g, int x, int y, int w, int h, int fill, boolean inset) {
       TerminalStyle.bevel(g, this.leftPos + x, this.topPos + y, w, h, fill, inset);
+   }
+
+   private boolean isOverButton(Button button, int mx, int my) {
+      return button.visible
+         && mx >= button.getX()
+         && mx < button.getX() + button.getWidth()
+         && my >= button.getY()
+         && my < button.getY() + button.getHeight();
    }
 
    private String rowStatus(CompoundTag row) {
@@ -370,7 +385,12 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
       this.panel(g, 6, 32, 194, 76, -5328185, true);
       this.panel(g, 203, 32, 176, 84, -6709837, true);
       if (this.pendingInline()) {
-         this.renderPendingRows(g, 8, 51, 190, 3, 18, mx, my);
+         this.renderPendingRows(
+            g, this.pendingListX(), this.pendingListY(), this.pendingListWidth(), this.pendingMaterialRows(), this.pendingListRowHeight(), mx, my
+         );
+         this.renderPendingIngredientEntry(
+            g, this.pendingListX(), this.pendingIngredientEntryY(), this.pendingListWidth(), this.pendingListRowHeight(), mx, my
+         );
       } else if (!this.search.getValue().isBlank()) {
          for (int i = 0; i < Math.min(4, this.results.size() - this.searchOffset); i++) {
             int y = 34 + i * 18;
@@ -531,12 +551,72 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
             -11315602,
             this.pendingWidth - 12
          );
-         this.renderPendingRows(g, x + 4, 66, this.pendingWidth - 8, 8, 21, mx, my);
+         this.renderPendingRows(
+            g, this.pendingListX(), this.pendingListY(), this.pendingListWidth(), this.pendingMaterialRows(), this.pendingListRowHeight(), mx, my
+         );
+         this.renderPendingIngredientEntry(
+            g, this.pendingListX(), this.pendingIngredientEntryY(), this.pendingListWidth(), this.pendingListRowHeight(), mx, my
+         );
       }
    }
 
    private boolean pendingInline() {
       return this.pendingWidth == 0 && this.showPendingInline && this.search.getValue().isBlank();
+   }
+
+   private int pendingListX() {
+      return this.pendingWidth > 0 ? -this.pendingWidth - 2 : 8;
+   }
+
+   private int pendingListY() {
+      return this.pendingWidth > 0 ? 66 : 51;
+   }
+
+   private int pendingListWidth() {
+      return this.pendingWidth > 0 ? this.pendingWidth - 8 : 190;
+   }
+
+   private int pendingListRowHeight() {
+      return this.pendingWidth > 0 ? 21 : 18;
+   }
+
+   private int pendingMaterialRows() {
+      return this.pendingWidth > 0 ? AutoPatternMenu.PENDING_VISIBLE_ROWS : AutoPatternMenu.PENDING_COMPACT_VISIBLE_ROWS;
+   }
+
+   private int pendingIngredientEntryY() {
+      return this.pendingListY() + this.pendingMaterialRows() * this.pendingListRowHeight();
+   }
+
+   private boolean pendingIngredientEntryAt(double mx, double my) {
+      int x = this.pendingListX();
+      int y = this.pendingIngredientEntryY();
+      return (this.pendingWidth > 0 || this.pendingInline())
+         && mx >= (double)(this.leftPos + x)
+         && mx < (double)(this.leftPos + x + this.pendingListWidth())
+         && my >= (double)(this.topPos + y)
+         && my < (double)(this.topPos + y + this.pendingListRowHeight());
+   }
+
+   private boolean canSwitchIngredients() {
+      return ((AutoPatternMenu)this.menu).view.getBoolean("canEditIngredients");
+   }
+
+   private void renderPendingIngredientEntry(GuiGraphics g, int x, int y, int w, int h, int mx, int my) {
+      boolean hovered = this.pendingIngredientEntryAt((double)mx, (double)my);
+      boolean available = this.canSwitchIngredients();
+      int fill = hovered && available ? -3946536 : -5328185;
+      this.panel(g, x, y, w - 4, h, fill, true);
+      int iconX = x + 2;
+      int iconY = y + (h - 16) / 2;
+      g.renderItem(Items.COMPARATOR.getDefaultInstance(), this.leftPos + iconX, this.topPos + iconY);
+      if (!available) {
+         g.fill(this.leftPos + iconX, this.topPos + iconY, this.leftPos + iconX + 16, this.topPos + iconY + 16, 0x66777777);
+      }
+
+      this.text(
+         g, this.tr("pending.ingredient_switch").getString(), x + 22, y + (h - 8) / 2, available ? -13092531 : -11315602, w - 30
+      );
    }
 
    private void renderPendingRows(GuiGraphics g, int x, int y, int w, int visible, int rowHeight, int mx, int my) {
@@ -608,11 +688,11 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
    }
 
    private int pendingRowAt(double mx, double my) {
-      int x = this.pendingWidth > 0 ? -this.pendingWidth - 2 : 8;
-      int y = this.pendingWidth > 0 ? 66 : 51;
-      int w = this.pendingWidth > 0 ? this.pendingWidth - 8 : 190;
-      int h = this.pendingWidth > 0 ? 21 : 18;
-      int visible = this.pendingWidth > 0 ? 8 : 3;
+      int x = this.pendingListX();
+      int y = this.pendingListY();
+      int w = this.pendingListWidth();
+      int h = this.pendingListRowHeight();
+      int visible = this.pendingMaterialRows();
       if (this.pendingWidth == 0 && !this.pendingInline()) {
          return -1;
       } else {
@@ -626,10 +706,10 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
    }
 
    private boolean pendingCheckboxAt(double mx, double my) {
-      int x = this.pendingWidth > 0 ? -this.pendingWidth - 1 : 9;
-      int y = this.pendingWidth > 0 ? 66 : 51;
-      int h = this.pendingWidth > 0 ? 21 : 18;
-      int visible = this.pendingWidth > 0 ? 8 : 3;
+      int x = this.pendingListX() + 1;
+      int y = this.pendingListY();
+      int h = this.pendingListRowHeight();
+      int visible = this.pendingMaterialRows();
       return (this.pendingWidth > 0 || this.pendingInline())
          && mx >= (double)(this.leftPos + x)
          && mx < (double)(this.leftPos + x + 12)
@@ -724,6 +804,19 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
                g.renderTooltip(this.font, details, Optional.empty(), mx, my);
             }
 
+            if (this.pendingIngredientEntryAt((double)mx, (double)my)) {
+               g.renderTooltip(
+                  this.font,
+                  List.of(
+                     this.tr("pending.ingredient_switch.tooltip"),
+                     this.tr(this.canSwitchIngredients() ? "pending.ingredient_switch.help" : "pending.ingredient_switch.unavailable")
+                  ),
+                  Optional.empty(),
+                  mx,
+                  my
+               );
+            }
+
             if (mx >= this.leftPos + 8 && mx < this.leftPos + 377 && my >= this.topPos + 138 && my < this.topPos + 150) {
                ArrayList<Component> detailsx = new ArrayList<>(
                   List.of(
@@ -767,8 +860,16 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
                g.renderTooltip(this.font, this.fluidSubstitutions.getTooltipMessage(), Optional.empty(), mx, my);
             }
 
-            if (this.processing.isHovered()) {
-               g.renderTooltip(this.font, List.of(this.tr("processing.help"), this.tr("processing.fuel")), Optional.empty(), mx, my);
+            if (this.isOverButton(this.processing, mx, my)) {
+               g.renderTooltip(
+                  this.font,
+                  AutoPatternTerminalPart.PROCESSING_GENERATION_AVAILABLE
+                     ? List.of(this.tr("processing.help"), this.tr("processing.fuel"))
+                     : List.of(this.tr("processing.unavailable"), this.tr("processing.unavailable.help")),
+                  Optional.empty(),
+                  mx,
+                  my
+               );
             }
 
             if (this.ignoreComponents.isHovered()) {
@@ -872,6 +973,16 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
       } else if (this.tree != null) {
          return this.tree.mouseClicked(mx, my, button);
       } else {
+         if (button == 0 && this.pendingIngredientEntryAt(mx, my)) {
+            if (this.canSwitchIngredients()) {
+               this.search.setFocused(false);
+               this.draggingRows = false;
+               this.ingredients.request();
+            }
+
+            return true;
+         }
+
          int scrollCount = this.search.getValue().isBlank() ? ((AutoPatternMenu)this.menu).view.getInt("rowCount") : this.results.size();
          if (button == 0
             && !this.pendingInline()
@@ -964,7 +1075,7 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
             this.send("output_scroll", delta, "");
          }
          return true;
-      } else if (this.pendingRowAt(mx, my) >= 0) {
+      } else if (this.pendingRowAt(mx, my) >= 0 || this.pendingIngredientEntryAt(mx, my)) {
          if (vertical != 0.0) {
             this.send("pending_scroll", vertical > 0.0 ? -1 : 1, this.pendingWidth == 0 ? "compact" : "wide");
          }

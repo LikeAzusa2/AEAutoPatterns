@@ -53,7 +53,8 @@ public final class AutoPatternMenu extends AEBaseMenu {
    public static final int OUTPUT_VISIBLE_ROWS = 3;
    private static final int OUTPUT_COLUMNS = 9;
    public static final int VISIBLE_ROWS = 4;
-   public static final int PENDING_VISIBLE_ROWS = 8;
+   public static final int PENDING_VISIBLE_ROWS = 7;
+   public static final int PENDING_COMPACT_VISIBLE_ROWS = 2;
    public static final int INGREDIENT_PAGE_SIZE = 5;
    private final AutoPatternTerminalPart terminal;
    private final Player player;
@@ -64,7 +65,7 @@ public final class AutoPatternMenu extends AEBaseMenu {
    private int pendingOffset;
    private int selected;
    private int ticks;
-   private int pendingVisibleRows = 8;
+   private int pendingVisibleRows = PENDING_VISIBLE_ROWS;
    private int rowRevision = -1;
    private int rowNodeCount = -1;
    private int rowMaterialCount = -1;
@@ -462,7 +463,9 @@ public final class AutoPatternMenu extends AEBaseMenu {
                   this.terminal.setSubstitution(true, Boolean.parseBoolean(a.value()));
                   break;
                case "processing":
-                  this.terminal.toggleProcessing();
+                  if (AutoPatternTerminalPart.PROCESSING_GENERATION_AVAILABLE) {
+                     this.terminal.toggleProcessing();
+                  }
                   break;
                case "autoUpload":
                   this.terminal.setAutoUpload(Boolean.parseBoolean(a.value()));
@@ -513,7 +516,7 @@ public final class AutoPatternMenu extends AEBaseMenu {
                   this.scrollOffset = Math.max(0, Math.min(a.index(), Math.max(0, rows.size() - 4)));
                   break;
                case "pending_scroll":
-                  this.pendingVisibleRows = a.value().equals("compact") ? 3 : 8;
+                  this.pendingVisibleRows = a.value().equals("compact") ? PENDING_COMPACT_VISIBLE_ROWS : PENDING_VISIBLE_ROWS;
                   this.pendingOffset = Math.max(0, this.pendingOffset + Integer.signum(a.index()));
                   break;
                case "issue":
