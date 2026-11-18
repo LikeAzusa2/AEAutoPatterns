@@ -253,25 +253,35 @@ public final class AutoPatternTerminalPart extends AbstractTerminalPart {
     public String uploadStatus() { return uploadStatus; }
     public List<PatternDeployment.Target> uploadTargets() { return PatternDeployment.targets(node().getGrid()); }
     public List<PatternDeployment.Selection> providerSelections() {
+        return providerSelections(providerSelectionConfigured ? List.of() : uploadTargets());
+    }
+    public List<PatternDeployment.Selection> providerSelections(List<PatternDeployment.Target> targets) {
         if(!providerSelectionConfigured) {
-            var targets=uploadTargets();
             if(uploadTarget>=0&&uploadTarget<targets.size())return List.of(new PatternDeployment.Selection(PatternDeployment.identity(targets.get(uploadTarget).container()),false));
         }
         return selectedProviders.stream().map(id->new PatternDeployment.Selection(id,craftingOnlyProviders.contains(id))).toList();
     }
-    public boolean providerSelected(String id) {return providerSelections().stream().anyMatch(s->s.id().equals(id));}
     public boolean providerCraftingOnly(String id) {return craftingOnlyProviders.contains(id);}
     public boolean autoContinueProviders(){return autoContinueProviders;}
     public void setAutoContinueProviders(boolean enabled){autoContinueProviders=enabled;setChanged();}
     public void configureProvider(String id,String operation) {
-        if(uploadTargets().stream().noneMatch(t->PatternDeployment.identity(t.container()).equals(id)))return;
+        var targets=uploadTargets();
+        var group=PatternDeployment.groupTargets(targets).stream().filter(g->g.id().equals(id)).findFirst();
+        if(group.isEmpty())return;
+        var ids=group.get().members().stream().map(t->PatternDeployment.identity(t.container())).toList();
         if(!providerSelectionConfigured) {
-            var previous=providerSelections();previous.forEach(s->selectedProviders.add(s.id()));providerSelectionConfigured=true;
+            providerSelections(targets).forEach(s->selectedProviders.add(s.id()));providerSelectionConfigured=true;
         }
         switch(operation) {
-            case "toggle" -> {if(!selectedProviders.remove(id))selectedProviders.add(id);}
-            case "single" -> {selectedProviders.clear();selectedProviders.add(id);}
-            case "crafting" -> {if(!craftingOnlyProviders.remove(id))craftingOnlyProviders.add(id);}
+            case "toggle" -> {
+                if(selectedProviders.containsAll(ids))selectedProviders.removeAll(ids);
+                else selectedProviders.addAll(ids);
+            }
+            case "single" -> {selectedProviders.retainAll(ids);selectedProviders.addAll(ids);}
+            case "crafting" -> {
+                if(craftingOnlyProviders.containsAll(ids))craftingOnlyProviders.removeAll(ids);
+                else craftingOnlyProviders.addAll(ids);
+            }
             default -> {return;}
         }
         uploadStatus="";setChanged();
@@ -434,12 +444,31 @@ public final class AutoPatternTerminalPart extends AbstractTerminalPart {
         if(nativeOptions(key).stream().noneMatch(c->c.id().equals(id)))return;
         external.remove(key);recipeChoices.put(key,id);ingredientChoices.remove(key);analyze(key);
     }
-    public void nextIngredient(AEKey key,int index) {
-        var n=nodes().get(key);if(n==null||index<0||index>=n.choice().ingredients().size()) return;
-        var variants=options(key).stream().filter(c->c.id().equals(n.choice().id())).findFirst().orElse(n.choice()).ingredients().get(index);if(variants.isEmpty()) return;
-        var selected=n.children().get(index);int at=variants.indexOf(selected);
-        ingredientChoices.computeIfAbsent(key,k->new HashMap<>()).put(index,variants.get((at+1)%variants.size()));
-        recipeChoices.put(key,n.choice().id());analyze(key);
+    public List<List<AEKey>> ingredientOptions(AEKey key) {
+        var node = nodes().get(key);
+        if (node == null || node.choice().kind() != DependencyPlanner.Kind.GENERATE) return List.of();
+        // Use the original choices so a locked ingredient can still be replaced.
+        return options(key).stream().filter(choice -> choice.id().equals(node.choice().id()))
+            .findFirst().orElse(node.choice()).ingredients();
+    }
+
+    public boolean replaceIngredient(AEKey key, String recipeId, AEKey current, AEKey replacement) {
+        var node = nodes().get(key);
+        if (node == null || !node.choice().id().equals(recipeId) || current.equals(replacement)) return false;
+        var groups = ingredientOptions(key);
+        if (groups.size() != node.children().size()) return false;
+        var slots = new ArrayList<Integer>();
+        for (int slot = 0; slot < groups.size(); slot++) {
+            if (!node.children().get(slot).equals(current)) continue;
+            if (!groups.get(slot).contains(replacement)) return false;
+            slots.add(slot);
+        }
+        if (slots.isEmpty()) return false;
+        var selected = ingredientChoices.computeIfAbsent(key, ignored -> new HashMap<>());
+        for (int slot : slots) selected.put(slot, replacement);
+        recipeChoices.put(key, recipeId);
+        analyze(key);
+        return true;
     }
     private List<DependencyPlanner.Choice<AEKey,PatternRecipe>> choices(AEKey key) {
         if(discovered.size()>=AnalysisConfig.NODES.get()&&!discovered.containsKey(key)) throw new IllegalStateException("Candidate material limit: "+AnalysisConfig.NODES.get());

@@ -17,18 +17,18 @@ final class DependencyTreeView {
     private final Minecraft mc=Minecraft.getInstance();
     private final AutoPatternMenu menu;
     private final BiConsumer<String,Integer> action;
-    private final Runnable back;
+    private final Runnable back,openIngredients;
     private final List<Button> buttons=new ArrayList<>();
     private final List<Button> floatingButtons=new ArrayList<>();
-    private Button recipe,external,variant,previous,next;
+    private Button recipe,external,variant;
     private EditBox materialSearch;
     private List<CompoundTag> materials=List.of();
     private int listOffset,cachedCount=-1,canvasLeft;
     private int width,height,canvasRight,panelX,panelY,panelWidth,panelHeight,selected=-1,selectedMaterial=-1,revision=-1;
     private double panX=12,panY=12,zoom=1;
     private boolean dragging,centerPending=true;
-    DependencyTreeView(AutoPatternMenu menu,BiConsumer<String,Integer> action,Runnable back,int width,int height) {
-        this.menu=menu;this.action=action;this.back=back;resize(width,height);
+    DependencyTreeView(AutoPatternMenu menu,BiConsumer<String,Integer> action,Runnable back,Runnable openIngredients,int width,int height) {
+        this.menu=menu;this.action=action;this.back=back;this.openIngredients=openIngredients;resize(width,height);
     }
     private Component tr(String key) {return Component.translatable("gui.aeautopatterns."+key);}
     private Button button(int x,int y,int w,String key,Runnable click) {
@@ -56,9 +56,7 @@ final class DependencyTreeView {
         button(width-96,12,84,"tree.back",back);
         recipe=floatingButton("recipe",()->edit("recipe",0));
         external=floatingButton("external",()->edit("external",0));
-        previous=floatingButton("previous",()->edit("slot",-1));
-        variant=floatingButton("variant",()->edit("ingredient",0));
-        next=floatingButton("next",()->edit("slot",1));
+        variant=floatingButton("variant",()->{if(canEdit())openIngredients.run();});
         positionPanel(canvasLeft+12,48);
     }
     private void edit(String name,int index) {if(canEdit())action.accept(name,index);}
@@ -129,9 +127,7 @@ final class DependencyTreeView {
         renderMaterials(g,mx,my,partial,current);
         if(!current)label(g,tr("tree.reanalyzing").getString(),canvasLeft+8,42,canvasRight-canvasLeft-16,0xffd3d7e8);
         boolean edit=canEdit();recipe.active=edit&&menu.view.getInt("recipes")>1;
-        external.active=edit;variant.active=edit&&menu.view.getInt("variants")>1;
-        previous.active=edit&&menu.view.getInt("ingredient")>1;
-        next.active=edit&&menu.view.getInt("ingredient")<menu.view.getInt("ingredients");
+        external.active=edit;variant.active=edit&&menu.view.getBoolean("canEditIngredients");
         for(var b:buttons)b.render(g,mx,my,partial);
         String progress=menu.treeNodes.size()+" / "+menu.treeTotal+(menu.treeLimited?"  "+tr("tree.limit").getString():"");
         label(g,tr("tree.help").getString(),16,height-19,width-32,0xffd4dbef);
@@ -149,7 +145,8 @@ final class DependencyTreeView {
                 wrapped(g,tr("kind."+menu.view.getString("selectedKind")).getString(),28,1);
                 wrapped(g,tr("stock").getString()+" "+menu.view.getLong("stored"),42,1);
                 wrapped(g,menu.view.getString("recipe"),56,2);
-                wrapped(g,menu.view.getInt("ingredient")+"/"+menu.view.getInt("ingredients")+" "+menu.view.getString("input"),80,2);
+                if (menu.view.getInt("ingredients") > 0)
+                    wrapped(g, Component.translatable("gui.aeautopatterns.ingredient.count", menu.view.getInt("ingredients")).getString(),80,2);
             }
             for(var b:floatingButtons)b.render(g,mx,my,partial);
             g.pose().popPose();
@@ -197,9 +194,7 @@ final class DependencyTreeView {
         panelY=Math.clamp(y,40,height-32-panelHeight);
         recipe.setPosition(panelX+8,panelY+panelHeight-62);recipe.setWidth(panelWidth-16);
         external.setPosition(panelX+8,panelY+panelHeight-42);external.setWidth(panelWidth-16);
-        previous.setPosition(panelX+8,panelY+panelHeight-22);previous.setWidth(22);
-        variant.setPosition(panelX+34,panelY+panelHeight-22);variant.setWidth(panelWidth-68);
-        next.setPosition(panelX+panelWidth-30,panelY+panelHeight-22);next.setWidth(22);
+        variant.setPosition(panelX+8,panelY+panelHeight-22);variant.setWidth(panelWidth-16);
     }
     private boolean inPanel(double mx,double my) {
         return selected>=0&&mx>=panelX&&mx<panelX+panelWidth&&my>=panelY&&my<panelY+panelHeight;

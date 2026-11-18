@@ -1,10 +1,13 @@
 package com.likeazusa2.aeautopatterns.logic;
 
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import appeng.api.inventories.InternalInventory;
 import appeng.api.networking.IGrid;
+import appeng.api.parts.IPart;
 import appeng.helpers.patternprovider.PatternContainer;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.Nameable;
 import net.minecraft.world.item.ItemStack;
 
 /** Server-side bridge to the native AE pattern-provider inventory API. */
@@ -36,6 +39,37 @@ public final class PatternDeployment {
             var c = found.get(i); result.add(new Target(i, c, displayName(c).getString(), freeSlots(c), c.getTerminalSortOrder()));
         }
         return List.copyOf(result);
+    }
+
+    public record TargetGroup(String id, String name, List<Target> members) {
+        public Target representative() { return members.getFirst(); }
+    }
+
+    public static List<TargetGroup> groupTargets(List<Target> targets) {
+        var groups = new ArrayList<TargetGroup>();
+        var groupedByName = new HashMap<String, List<Target>>();
+        for (var target : targets) {
+            var name = target.name();
+            if (name.isBlank() || isDefaultProviderName(target.container(), name)) {
+                groups.add(new TargetGroup(identity(target.container()), target.name(), List.of(target)));
+            } else {
+                groupedByName.computeIfAbsent(name, key -> {
+                    var members = new ArrayList<Target>();
+                    var id = "named:" + UUID.nameUUIDFromBytes(key.getBytes(StandardCharsets.UTF_8));
+                    groups.add(new TargetGroup(id, key, members));
+                    return members;
+                }).add(target);
+            }
+        }
+        return groups.stream().map(g -> new TargetGroup(g.id(), g.name(), List.copyOf(g.members()))).toList();
+    }
+
+    private static boolean isDefaultProviderName(PatternContainer container, String name) {
+        var item = providerItem(container);
+        // The terminal group icon can belong to an adjacent machine; use the provider's own item.
+        if (!item.isEmpty() && new ItemStack(item.getItem()).getHoverName().getString().equals(name)) return true;
+        return container instanceof Nameable nameable && !nameable.hasCustomName()
+            && nameable.getName().getString().equals(name);
     }
 
     public static Result deploy(IGrid grid, int targetIndex, ItemStack pattern) {
@@ -100,11 +134,16 @@ public final class PatternDeployment {
         return container.getClass().getName()+"/"+container.getTerminalSortOrder();
     }
     public static ItemStack icon(PatternContainer container) {
+        var item = providerItem(container);
+        return item.isEmpty() ? appeng.core.definitions.AEBlocks.PATTERN_PROVIDER.stack() : item;
+    }
+    private static ItemStack providerItem(PatternContainer container) {
         if(container instanceof appeng.helpers.patternprovider.PatternProviderLogicHost host) {
             var key=host.getTerminalIcon();if(key!=null)return key.toStack();
         }
+        if(container instanceof IPart part)return new ItemStack(part.getPartItem());
         if(container instanceof net.minecraft.world.level.block.entity.BlockEntity entity)return new ItemStack(entity.getBlockState().getBlock());
-        return appeng.core.definitions.AEBlocks.PATTERN_PROVIDER.stack();
+        return ItemStack.EMPTY;
     }
     public static String location(PatternContainer container) {
         if(container instanceof appeng.helpers.patternprovider.PatternProviderLogicHost host) {
@@ -127,6 +166,6 @@ public final class PatternDeployment {
 
     private static Component displayName(PatternContainer c) {
         try { var group = c.getTerminalGroup(); if (group != null && group.name() != null) return group.name(); } catch (Throwable ignored) {}
-        return Component.literal("Pattern Provider");
+        return icon(c).getHoverName();
     }
 }

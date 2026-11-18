@@ -49,6 +49,12 @@ public final class TerminalPackets {
         public static final StreamCodec<RegistryFriendlyByteBuf,Snapshot> CODEC=StreamCodec.composite(ByteBufCodecs.VAR_INT,Snapshot::container,ByteBufCodecs.COMPOUND_TAG,Snapshot::data,Snapshot::new);
         @Override public Type<? extends CustomPacketPayload> type(){ return TYPE; }
     }
+    public record IngredientBatch(int container, CompoundTag data) implements CustomPacketPayload {
+        public static final Type<IngredientBatch> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(AEAutoPatterns.ID, "ingredient_batch"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, IngredientBatch> CODEC = StreamCodec.composite(
+            ByteBufCodecs.VAR_INT, IngredientBatch::container, ByteBufCodecs.COMPOUND_TAG, IngredientBatch::data, IngredientBatch::new);
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
     public record TreeBatch(int container,CompoundTag data) implements CustomPacketPayload {
         public static final Type<TreeBatch> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(AEAutoPatterns.ID,"tree_batch"));
         public static final StreamCodec<RegistryFriendlyByteBuf,TreeBatch> CODEC=StreamCodec.composite(ByteBufCodecs.VAR_INT,TreeBatch::container,ByteBufCodecs.COMPOUND_TAG,TreeBatch::data,TreeBatch::new);
@@ -73,7 +79,7 @@ public final class TerminalPackets {
         @Override public Type<? extends CustomPacketPayload> type(){return TYPE;}
     }
     public static void register(RegisterPayloadHandlersEvent event) {
-        var r=event.registrar("3");
+        var r=event.registrar("4");
         r.playBidirectional(JeiBatch.TYPE,JeiBatch.CODEC,new net.neoforged.neoforge.network.handling.DirectionalPayloadHandler<>(
             (p,c)->c.enqueueWork(()->{if(!p.response())com.likeazusa2.aeautopatterns.client.JeiCompat.enqueue(p);}),
             (p,c)->c.enqueueWork(()->{
@@ -97,6 +103,11 @@ public final class TerminalPackets {
         r.playToServer(JeiCandidates.TYPE,JeiCandidates.CODEC,(p,c)->c.enqueueWork(()->{
             if(c.player().containerMenu instanceof AutoPatternMenu m && m.containerId==p.container() && m.stillValid(c.player()))
                 m.receiveJeiCandidates(p.revision(),p.key(),p.recipeIds());
+        }));
+        r.playToClient(IngredientBatch.TYPE, IngredientBatch.CODEC, (packet, context) -> context.enqueueWork(() -> {
+            if (context.player().containerMenu instanceof AutoPatternMenu menu && menu.containerId == packet.container()) {
+                menu.receiveIngredients(packet.data());
+            }
         }));
         r.playToClient(TreeBatch.TYPE,TreeBatch.CODEC,(p,c)->c.enqueueWork(()->{
             if(c.player().containerMenu instanceof AutoPatternMenu m && m.containerId==p.container())m.receiveTree(p.data());

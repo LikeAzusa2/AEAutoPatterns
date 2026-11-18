@@ -25,6 +25,13 @@ final class ProviderSelectionView {
         this.menu=menu;this.action=action;this.back=back;resize(width,height);
     }
     private Component tr(String key,Object... args){return Component.translatable("gui.aeautopatterns.providers."+key,args);}
+    private String label(CompoundTag row,int width) {
+        String suffix=row.getInt("count")>1?" ×"+row.getInt("count"):"";
+        return mc.font.plainSubstrByWidth(row.getString("name"),Math.max(0,width-mc.font.width(suffix)))+suffix;
+    }
+    private Component location(CompoundTag row) {
+        return row.getInt("count")>1?tr("group",row.getInt("count")):Component.literal(row.getString("location"));
+    }
     void resize(int width,int height) {
         String query=search==null?"":search.getValue();this.width=width;this.height=height;
         x=(width-360)/2;y=(height-252)/2;
@@ -58,12 +65,11 @@ final class ProviderSelectionView {
             var icon=ItemStack.parseOptional(mc.level.registryAccess(),row.getCompound("icon"));
             g.pose().pushPose();g.pose().translate(cx+17,cy+8,0);g.pose().scale(1.5f,1.5f,1);
             g.renderItem(icon,0,0);g.pose().popPose();
-            String label=row.getString("name");
-            g.drawString(mc.font,mc.font.plainSubstrByWidth(label,112),cx+45,cy+5,TEXT,false);
+            g.drawString(mc.font,label(row,112),cx+45,cy+5,TEXT,false);
             String space=tr("space",row.getInt("free"),row.getInt("slots")).getString();
             g.drawString(mc.font,mc.font.plainSubstrByWidth(space,112),cx+45,cy+16,MUTED,false);
-            String mode=row.getBoolean("craftingOnly")?tr("crafting.short").getString():tr("any.short").getString();
-            if(row.getBoolean("selected"))mode="#"+row.getInt("order")+" · "+mode;
+            String mode=tr(row.getBoolean("craftingMixed")?"crafting.mixed.short":row.getBoolean("craftingOnly")?"crafting.short":"any.short").getString();
+            if(row.getInt("order")>0)mode="#"+row.getInt("order")+" · "+mode;
             g.drawString(mc.font,mc.font.plainSubstrByWidth(mode,112),cx+45,cy+27,row.getBoolean("craftingOnly")?0xff245b47:MUTED,false);
             String id=row.getString("id");
             button(cx+3,cy+13,16,12,Component.empty(),()->action.send("provider_toggle",0,id));
@@ -83,16 +89,22 @@ final class ProviderSelectionView {
             renderDetails(g,mx,my,partial);return;
         }
         for(var button:buttons)button.render(g,mx,my,partial);
-        for(int i=0;i<rows.size();i++)if(rows.getCompound(i).getBoolean("selected")) {
+        for(int i=0;i<rows.size();i++) {
+            var row=rows.getCompound(i);
+            if(!row.getBoolean("selected")&&!row.getBoolean("selectedMixed"))continue;
             int cx=x+12+i%2*174,cy=y+79+i/2*45;
             g.fill(cx+5,cy+14,cx+14,cy+23,0xffe8edf2);
+            if(row.getBoolean("selectedMixed")) {
+                g.fill(cx+7,cy+18,cx+13,cy+20,0xff245b47);
+                continue;
+            }
             g.fill(cx+7,cy+18,cx+9,cy+20,0xff245b47);
             g.fill(cx+9,cy+20,cx+11,cy+22,0xff245b47);
             g.fill(cx+10,cy+17,cx+12,cy+19,0xff245b47);
             g.fill(cx+12,cy+15,cx+14,cy+17,0xff245b47);
         }
         if(hover!=null)g.renderTooltip(mc.font,List.of(Component.literal(hover.getString("name")),
-            Component.literal(hover.getString("location")),tr("details.help")),Optional.empty(),mx,my);
+            location(hover),tr("details.help")),Optional.empty(),mx,my);
         else if(mx>=x+12&&mx<x+348&&my>=y+53&&my<y+71)
             tooltip(g,List.of(tr("continue.help")),mx,my);
     }
@@ -102,13 +114,13 @@ final class ProviderSelectionView {
         bevel(g,dx,dy,282,150,PANEL,false);buttons.clear();
         var icon=ItemStack.parseOptional(mc.level.registryAccess(),detail.getCompound("icon"));
         g.renderItem(icon,dx+12,dy+12);
-        g.drawString(mc.font,mc.font.plainSubstrByWidth(detail.getString("name"),232),dx+36,dy+15,TEXT,false);
-        g.drawString(mc.font,mc.font.plainSubstrByWidth(detail.getString("location"),258),dx+12,dy+36,MUTED,false);
+        g.drawString(mc.font,label(detail,232),dx+36,dy+15,TEXT,false);
+        g.drawString(mc.font,mc.font.plainSubstrByWidth(location(detail).getString(),258),dx+12,dy+36,MUTED,false);
         g.drawString(mc.font,tr("space",detail.getInt("free"),detail.getInt("slots")),dx+12,dy+50,TEXT,false);
-        button(dx+12,dy+70,258,20,tr(detail.getBoolean("craftingOnly")?"crafting.on":"crafting.off"),
+        button(dx+12,dy+70,258,20,tr(detail.getBoolean("craftingMixed")?"crafting.mixed":detail.getBoolean("craftingOnly")?"crafting.on":"crafting.off"),
             ()->action.send("provider_crafting",0,detailId));
-        button(dx+12,dy+101,123,20,tr("single"),()->{action.send("provider_single",0,detailId);detailId="";});
-        button(dx+147,dy+101,123,20,tr(detail.getBoolean("selected")?"deselect":"select"),
+        button(dx+12,dy+101,123,20,tr(detail.getInt("count")>1?"single.group":"single"),()->{action.send("provider_single",0,detailId);detailId="";});
+        button(dx+147,dy+101,123,20,tr(detail.getBoolean("selectedMixed")?"select.group":detail.getBoolean("selected")?"deselect":"select"),
             ()->action.send("provider_toggle",0,detailId));
         button(dx+94,dy+128,94,16,tr("close"),()->detailId="");
         for(var button:buttons)button.render(g,mx,my,partial);

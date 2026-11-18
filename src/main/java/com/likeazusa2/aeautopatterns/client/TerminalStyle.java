@@ -16,7 +16,7 @@ final class TerminalStyle {
         g.fill(x,y,x+width,y+1,top);g.fill(x,y,x+1,y+height,top);
         g.fill(x,y+height-1,x+width,y+height,bottom);g.fill(x+width-1,y,x+width,y+height,bottom);
     }
-    static final class TerminalButton extends Button {
+    static class TerminalButton extends Button {
         TerminalButton(int x,int y,int width,int height,Component label,OnPress press) {
             super(x,y,width,height,label,press,DEFAULT_NARRATION);
         }

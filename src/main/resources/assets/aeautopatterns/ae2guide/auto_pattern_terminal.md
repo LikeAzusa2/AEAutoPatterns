@@ -14,54 +14,32 @@ item_ids:
 
 <ItemImage id="aeautopatterns:auto_pattern_terminal" />
 
-Automatically writes AE patterns for a target and its missing dependencies. **It consumes blank patterns, not recipe ingredients.** Finishing a plan means its patterns are ready; crafting still requires installed patterns, working machines and supplied base materials.
+## Use It
 
-## Opening this guide
+1. **Connect the terminal.** Attach it to the side of an ME cable. Make sure the network has power and an available channel, then right-click the terminal.
+2. **Choose a target.** Enter an item name or ID in the search box and click a result. You can also hold an item on the cursor and click **Select cursor item**. With JEI installed, drag a JEI ghost item into the search field.
+3. **Analyze the route.** Click **Analyze** and wait for **Ready**. The left queue lists materials that need a recipe choice or have an unresolved path. Select a pending material, browse its 3×3 recipe preview with the arrows, then confirm. For an unresolved material, click it to locate the path and change its recipe, ingredient, or external-supply setting.
+4. **Write patterns.** Put AE blank patterns in the blank pattern input slot. The screen shows how many are needed. Once the route is resolved, click **Start / Resume**. Each new pattern uses one blank pattern and appears in the output buffer.
+5. **Install the results.** Move patterns into AE pattern providers. Molecular assemblers handle crafting, stonecutting and smithing patterns. Processing patterns need the matching machine, fuel, power and item connections.
 
-Aim directly at the installed terminal and press **G**. Change this binding under **Controls → AE Auto Patterns → Terminal guide** if needed. In an inventory, hover over the terminal item and **hold GuideME's guide key** (G by default). This page is also listed under AE's **Items, Blocks and Machines**.
+Scroll the list, or select several entries and set them to external supply together.
 
-## First patterns
+## Optional Features
 
-1. Install the terminal on an ME cable. Supply power and a free channel; right-click to open it. Its panel inherits the cable color.
-2. Search by item name or ID and click a result. Alternatively, hold an item on the inventory cursor and use **Select cursor item** to preserve its exact components. Selecting a target does not consume it.
-3. Click **Analyze**. Review the missing, network, buffered and external materials. When a native recipe needs confirmation, click the marked material, browse the **3×3 recipe previews** with the arrows and confirm a recipe. Independent branches can be analyzed while a choice is pending.
-4. Put AE **blank patterns** in the input slot. Once every route is resolved, click **Start / Resume**. The terminal writes at most one pattern per tick into its **27-slot output buffer**. The required count is the number of new patterns.
-5. Install the results in [pattern providers](ae2:items-blocks-machines/pattern_provider.md). Native crafting, stonecutting and smithing patterns use [molecular assemblers](ae2:items-blocks-machines/molecular_assembler.md); processing patterns need the corresponding machines and input/output connections.
+- To generate supported machine recipes such as furnace recipes, enable **Processing patterns** before analysis. Configure machine fuel and operating conditions yourself.
+- Open **Recipe tree** to inspect the full material route. Select a material to change its recipe, ingredient or external-supply setting.
+- Open **Provider target**, select network providers, then enable **Automatic upload** to send generated patterns directly to them.
 
-## Reviewing and adjusting a route
+## What Analysis Does
 
-After analysis, open **Recipe tree**. The target is at the top; ingredients branch downward. Drag empty space to pan and use the wheel to zoom. Search or scroll the material list on the left, then click an entry to jump to it. Click a tree node to open its floating details and controls.
+The terminal follows supported recipes from the target down to their inputs, then writes missing patterns from ingredients upward. For `A ← B + C` and `B ← D`, the order is **D, B, A**. Shared materials are written once. Existing network patterns skip encoding for their product while the terminal still checks that product's inputs. Each new pattern uses one blank pattern; analysis and encoding do not consume recipe ingredients.
 
-You can change a recipe, cycle a tagged ingredient or mark a material as **External supply** to stop expanding that branch. Shared materials may appear in several branches; changing one updates all of them and reanalyzes the plan. Encoding still deduplicates materials. The display stops at 4096 occurrences and marks truncated branches; this is separate from the analysis limit.
+- **Choose recipe:** select the material in the left queue, preview a recipe and confirm it.
+- **Unresolved / unsupported:** select the material, choose another route or set external supply.
+- **Waiting for blanks:** add blank patterns and click **Start / Resume**.
+- **Output full / offline:** take patterns from the output, or restore network power and channel access.
 
-## Pattern options
-
-- **Processing patterns**, off by default: generates supported machine recipes. Disabling it still allows installed or buffered patterns to be reused. Recipe IDs appear in the generated processing pattern's tooltip.
-- **Item / fluid substitution**: AE's native pattern options. Defaults are items off, fluids on. They apply only to supported recipe inputs, not arbitrary machine requirements.
-- **Automatic upload**: select a visible network pattern provider, then enable upload. Results go to that provider instead of the buffer. A missing or full target pauses generation; select another target or free space.
-
-Machine recipes require a compatible adapter. Fluid and chemical routes need the matching integrations; Mekanism chemicals additionally require **Applied Mekanistics**. Chance byproducts and machine conditions are warnings, not guaranteed AE outputs. Supply energy, fuel and machine conditions yourself. **JEI is optional**; without it, analysis uses server recipes directly.
-
-## How it works
-
-For `A ← B + C` and `B ← D`, the terminal examines the supported server recipes and installed/buffered patterns, then expands the inputs. It writes missing dependencies before their parents: **B before A**. A material with no supported recipe becomes external supply; explicitly unsupported recipes remain a problem until you choose another route or set an external boundary.
-
-An existing pattern skips encoding that product, but its inputs are still checked. Items merely sitting in network storage do not stop expansion; pattern items in ordinary storage do not count as deployed. Shared dependencies are planned once.
-
-Analysis works in small server steps, groups cycles and tries alternative routes. Compression/decompression loops can make the repeated raw ingredient external; a manually locked cyclic route instead reports a problem. Changing a material reuses unaffected analysis. Default limits are **512 levels and 16384 candidate materials**; very large packs may take longer.
-
-## When it pauses
-
-| Status | What to do |
-|---|---|
-| Choose recipe | Click the marked material, browse previews and confirm. |
-| Unresolved route / cycle | Click the bottom warning to locate the failing step; change its recipe/ingredient or set external supply. |
-| No blanks / output full | Add blank patterns or remove outputs. Generation can continue as space becomes available. |
-| Offline | Restore power and channels. |
-| Stale / analyze again | Reanalyze after network membership, selected patterns, recipes or world loading change. Existing outputs remain. |
-| Unsupported | Choose a supported route, install a matching adapter or explicitly supply this material externally. |
-
-**Pause** waits for manual resume. **Cancel** ends the task and keeps inventory. Hover over the status line for analysis progress and diagnostics. Route choices and terminal inventory are shared by everyone using the same terminal.
+Aim at the terminal and press **G** to reopen this guide. In an inventory, hold GuideME's guide key while hovering over the terminal item.
 
 ## Recipe
 

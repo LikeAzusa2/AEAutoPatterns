@@ -16,15 +16,17 @@ import com.likeazusa2.aeautopatterns.part.AutoPatternTerminalPart;
 import com.likeazusa2.aeautopatterns.ModContent;
 import com.likeazusa2.aeautopatterns.logic.DependencyPlanner;
 import com.likeazusa2.aeautopatterns.logic.MindMapLayout;
+import com.likeazusa2.aeautopatterns.logic.PatternDeployment;
 import com.likeazusa2.aeautopatterns.network.TerminalPackets;
 
 public final class AutoPatternMenu extends AEBaseMenu {
     public static final int VISIBLE_ROWS=4;
     public static final int PENDING_VISIBLE_ROWS=8;
+    public static final int INGREDIENT_PAGE_SIZE=5;
     private final AutoPatternTerminalPart terminal;
     private final Player player;
     private final Set<AEKey> collapsed=new HashSet<>();
-    private int scrollOffset,pendingOffset,selected,ingredient,ticks;
+    private int scrollOffset,pendingOffset,selected,ticks;
     private int pendingVisibleRows=PENDING_VISIBLE_ROWS;
     private int rowRevision=-1,rowNodeCount=-1,rowMaterialCount=-1;
     private boolean rowsDirty=true;
@@ -44,6 +46,119 @@ public final class AutoPatternMenu extends AEBaseMenu {
     private int providerOffset;
     private AEKey pickerKey;
     private int pickerPage,pickerRevision;
+    private record IngredientGroup(AEKey current, int slotCount, List<AEKey> alternatives) {}
+
+    private record IngredientPicker(AEKey key, String recipeId, int revision, List<IngredientGroup> inputs, int slot) {
+        IngredientPicker select(int slot) {
+            return new IngredientPicker(key, recipeId, revision, inputs, slot);
+        }
+
+        List<AEKey> candidates() {
+            return slot < 0 ? List.of() : inputs.get(slot).alternatives();
+        }
+    }
+    private IngredientPicker ingredientPicker;
+    private int ingredientListId, sentIngredientCount;
+    private final List<AEKey> receivedIngredients = new ArrayList<>();
+    private int receivedIngredientListId = -1;
+
+    public void receiveIngredients(CompoundTag batch) {
+        var picker = view.getCompound("ingredientPicker");
+        int listId = batch.getInt("listId");
+        if (!view.contains("ingredientPicker") || picker.getInt("listId") != listId) return;
+        if (receivedIngredientListId != listId) {
+            receivedIngredientListId = listId;
+            receivedIngredients.clear();
+        }
+        if (batch.getInt("offset") != receivedIngredients.size()) return;
+        for (var entry : batch.getList("keys", Tag.TAG_COMPOUND)) {
+            receivedIngredients.add(AEKey.fromTagGeneric(player.registryAccess(), (CompoundTag) entry));
+        }
+    }
+
+    public List<AEKey> receivedIngredients(int listId) {
+        return receivedIngredientListId == listId ? receivedIngredients : List.of();
+    }
+
+    private void openIngredientPicker(AEKey key) {
+        if (!treeReady() || key == null) return;
+        var node = terminal.nodes().get(key);
+        var groups = terminal.ingredientOptions(key);
+        if (node == null || groups.isEmpty() || groups.size() != node.children().size()) return;
+        var slotsByIngredient = new LinkedHashMap<AEKey, List<Integer>>();
+        for (int slot = 0; slot < groups.size(); slot++) {
+            slotsByIngredient.computeIfAbsent(node.children().get(slot), ignored -> new ArrayList<>()).add(slot);
+        }
+        var inputs = new ArrayList<IngredientGroup>(slotsByIngredient.size());
+        slotsByIngredient.forEach((current, slots) -> {
+            var common = new LinkedHashSet<>(groups.get(slots.getFirst()));
+            common.remove(current);
+            for (int i = 1; i < slots.size() && !common.isEmpty(); i++) {
+                common.retainAll(new HashSet<>(groups.get(slots.get(i))));
+            }
+            inputs.add(new IngredientGroup(current, slots.size(), List.copyOf(common)));
+        });
+        ingredientPicker = new IngredientPicker(key, node.choice().id(), terminal.revision(), List.copyOf(inputs), -1);
+        ingredientListId++;
+        sentIngredientCount = 0;
+    }
+
+    private void ingredientAction(TerminalPackets.Action action) {
+        var picker = ingredientPicker;
+        if (picker == null || picker.revision() != terminal.revision()) return;
+        int index = action.index();
+        if (action.action().equals("ingredient_slot")) {
+            if (index >= 0 && index < picker.inputs().size() && index != picker.slot()) {
+                ingredientPicker = picker.select(index);
+                ingredientListId++;
+                sentIngredientCount = 0;
+            }
+            return;
+        }
+        if (picker.slot() < 0 || !action.value().equals(Integer.toString(ingredientListId))) return;
+        var candidates = picker.candidates();
+        if (index >= 0 && index < sentIngredientCount && index < candidates.size()
+                && terminal.replaceIngredient(picker.key(), picker.recipeId(), picker.inputs().get(picker.slot()).current(), candidates.get(index))) {
+            ingredientPicker = null;
+        }
+    }
+
+    private void syncIngredientPicker(CompoundTag tag) {
+        var picker = ingredientPicker;
+        if (picker == null) return;
+        if (picker.revision() != terminal.revision()) {
+            ingredientPicker = null;
+            return;
+        }
+        var data = new CompoundTag();
+        data.putInt("slot", picker.slot());
+        data.putInt("listId", ingredientListId);
+        data.put("product", picker.key().toTagGeneric(player.registryAccess()));
+        var inputs = new ListTag();
+        for (var input : picker.inputs()) inputs.add(input.current().toTagGeneric(player.registryAccess()));
+        data.put("inputs", inputs);
+        data.putIntArray("slotCounts", picker.inputs().stream().mapToInt(IngredientGroup::slotCount).toArray());
+        data.putInt("candidateCount", picker.candidates().size());
+        tag.put("ingredientPicker", data);
+    }
+
+    private void streamIngredients(ServerPlayer serverPlayer) {
+        var picker = ingredientPicker;
+        if (picker == null || picker.revision() != terminal.revision()) return;
+        var candidates = picker.candidates();
+        if (sentIngredientCount >= candidates.size()) return;
+        int end = Math.min(sentIngredientCount + 32, candidates.size());
+        var keys = new ListTag();
+        for (int i = sentIngredientCount; i < end; i++) {
+            keys.add(candidates.get(i).toTagGeneric(player.registryAccess()));
+        }
+        var batch = new CompoundTag();
+        batch.putInt("listId", ingredientListId);
+        batch.putInt("offset", sentIngredientCount);
+        batch.put("keys", keys);
+        PacketDistributor.sendToPlayer(serverPlayer, new TerminalPackets.IngredientBatch(containerId, batch));
+        sentIngredientCount = end;
+    }
     private void openPicker(AEKey key) {
         if(terminal.nativeOptions(key).isEmpty())return;
         pickerKey=key;pickerPage=0;pickerRevision=terminal.revision();
@@ -97,11 +212,19 @@ public final class AutoPatternMenu extends AEBaseMenu {
         if(stack.isEmpty())slot.setByPlayer(ItemStack.EMPTY);else slot.setChanged();return copy;
     }
     public void action(TerminalPackets.Action a) {
+        if(a.action().equals("ingredient_close")){ingredientPicker=null;sync();return;}
         if(a.action().equals("picker_close")){pickerKey=null;sync();return;}
         if(a.action().equals("tree_close")){treeOpen=false;return;}
         if(a.action().equals("providers_close")){providersOpen=false;return;}
         if(a.action().equals("jei_status")){terminal.setJeiClient(player.getUUID(),Boolean.parseBoolean(a.value()));return;}
         if(a.revision()!=terminal.revision()) { pickerKey=null;sync();return; }
+        if (ingredientPicker != null && ingredientPicker.revision() != terminal.revision()) ingredientPicker = null;
+        if (ingredientPicker != null) {
+            switch (a.action()) {
+                case "ingredient_slot", "ingredient_choose" -> { ingredientAction(a); sync(); }
+            }
+            return;
+        }
         if(a.action().equals("picker_page")||a.action().equals("picker_confirm")) {
             if(pickerKey!=null&&pickerRevision==terminal.revision()) {
                 var options=terminal.nativeOptions(pickerKey);
@@ -161,14 +284,15 @@ public final class AutoPatternMenu extends AEBaseMenu {
                     locateMaterial(keys,keys.get(a.index()));
             }
             case "select" -> { if(a.index()>=0&&a.index()<keys.size()){
-                selected=a.index();ingredient=0;var n=terminal.nodes().get(keys.get(selected));
+                selected=a.index();var n=terminal.nodes().get(keys.get(selected));
                 if(n!=null&&n.choice().kind()==DependencyPlanner.Kind.NEEDS_RECIPE)openPicker(keys.get(selected));
             } }
             case "expand" -> { if(a.index()>=0&&a.index()<keys.size()) { var k=keys.get(a.index());if(!collapsed.remove(k))collapsed.add(k);rowsDirty=true; } }
             case "recipe" -> { if(key!=null) {if(!terminal.nativeOptions(key).isEmpty())openPicker(key);else terminal.nextRecipe(key);} }
             case "external" -> { if(key!=null)terminal.toggleExternal(key); }
-            case "ingredient" -> { if(key!=null)terminal.nextIngredient(key,ingredient); }
-            case "slot" -> ingredient=Math.max(0,ingredient+a.index());
+            case "ingredient_open" -> {
+                if (pickerKey == null && !providersOpen && selected == a.index()) openIngredientPicker(key);
+            }
             default -> { return; }
         }
         sync();
@@ -189,7 +313,11 @@ public final class AutoPatternMenu extends AEBaseMenu {
     }
     @Override public void broadcastChanges() {
         super.broadcastChanges();
-        if(!player.level().isClientSide) {if(++ticks%10==0)sync();streamTree();}
+        if (player instanceof ServerPlayer serverPlayer) {
+            if (++ticks % 10 == 0) sync();
+            streamTree();
+            streamIngredients(serverPlayer);
+        }
     }
     private void streamTree() {
         if(!treeOpen||!(player instanceof ServerPlayer sp))return;
@@ -262,6 +390,7 @@ public final class AutoPatternMenu extends AEBaseMenu {
     public void sync() {
         if(!(player instanceof ServerPlayer sp))return;
         var tag=new CompoundTag();tag.putInt("revision",terminal.revision());tag.putString("state",terminal.state().name());
+        syncIngredientPicker(tag);
         if(pickerKey!=null&&pickerRevision!=terminal.revision())pickerKey=null;
         if(pickerKey!=null) {
             var options=terminal.nativeOptions(pickerKey);
@@ -292,30 +421,45 @@ public final class AutoPatternMenu extends AEBaseMenu {
         var uploadTargets=terminal.uploadTargets();
         tag.putInt("uploadTargetCount",uploadTargets.size());
         tag.putBoolean("autoContinueProviders",terminal.autoContinueProviders());
-        tag.putInt("selectedProviderCount",terminal.providerSelections().size());
+        var selections=terminal.providerSelections(uploadTargets);
+        var selectionOrders=new HashMap<String,Integer>();
+        for(int i=0;i<selections.size();i++)selectionOrders.put(selections.get(i).id(),i+1);
+        tag.putInt("selectedProviderCount",selections.size());
         if(providersOpen) {
-            var filtered=uploadTargets.stream().filter(t->(t.name()+" "+com.likeazusa2.aeautopatterns.logic.PatternDeployment.location(t.container())+" "+
-                net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(com.likeazusa2.aeautopatterns.logic.PatternDeployment.icon(t.container()).getItem()))
-                .toLowerCase(Locale.ROOT).contains(providerSearch)).toList();
+            var filtered=PatternDeployment.groupTargets(uploadTargets).stream().filter(group->providerSearch.isEmpty()
+                || group.name().toLowerCase(Locale.ROOT).contains(providerSearch)
+                || group.members().stream().anyMatch(t->(PatternDeployment.location(t.container())+" "+
+                    BuiltInRegistries.ITEM.getKey(PatternDeployment.icon(t.container()).getItem()))
+                    .toLowerCase(Locale.ROOT).contains(providerSearch))).toList();
             providerOffset=Math.min(providerOffset,Math.max(0,(filtered.size()-1)/6*6));
             tag.putInt("providerOffset",providerOffset);tag.putInt("providerCount",filtered.size());
-            var providers=new ListTag();var selections=terminal.providerSelections();
+            var providers=new ListTag();
             for(int i=providerOffset;i<Math.min(filtered.size(),providerOffset+6);i++) {
-                var target=filtered.get(i);var entry=new CompoundTag();
-                var id=com.likeazusa2.aeautopatterns.logic.PatternDeployment.identity(target.container());
-                entry.putString("id",id);entry.putString("name",target.name());entry.putInt("free",target.freeSlots());
-                entry.putInt("slots",target.container().getTerminalPatternInventory().size());
-                entry.putString("location",com.likeazusa2.aeautopatterns.logic.PatternDeployment.location(target.container()));
-                entry.putBoolean("selected",selections.stream().anyMatch(s->s.id().equals(id)));
-                entry.putBoolean("craftingOnly",terminal.providerCraftingOnly(id));
-                entry.putInt("order",java.util.stream.IntStream.range(0,selections.size()).filter(at->selections.get(at).id().equals(id)).findFirst().orElse(-1)+1);
-                entry.put("icon",com.likeazusa2.aeautopatterns.logic.PatternDeployment.icon(target.container()).save(player.registryAccess()));
+                var group=filtered.get(i);var entry=new CompoundTag();
+                var container=group.representative().container();
+                int selectedCount=0,craftingCount=0,order=Integer.MAX_VALUE,free=0,slots=0;
+                for(var target:group.members()) {
+                    var memberId=PatternDeployment.identity(target.container());
+                    var memberOrder=selectionOrders.get(memberId);
+                    if(memberOrder!=null) {selectedCount++;order=Math.min(order,memberOrder);}
+                    if(terminal.providerCraftingOnly(memberId))craftingCount++;
+                    free+=target.freeSlots();slots+=target.container().getTerminalPatternInventory().size();
+                }
+                int count=group.members().size();
+                entry.putString("id",group.id());entry.putString("name",group.name());entry.putInt("count",count);
+                entry.putInt("free",free);entry.putInt("slots",slots);
+                entry.putString("location",PatternDeployment.location(container));
+                entry.putBoolean("selected",selectedCount==count);
+                entry.putBoolean("selectedMixed",selectedCount>0&&selectedCount<count);
+                entry.putBoolean("craftingOnly",craftingCount==count);
+                entry.putBoolean("craftingMixed",craftingCount>0&&craftingCount<count);
+                entry.putInt("order",selectedCount==0?0:order);
+                entry.put("icon",PatternDeployment.icon(container).save(player.registryAccess()));
                 providers.add(entry);
             }
             tag.put("providers",providers);
         }
-        var selectedIds=terminal.providerSelections().stream().map(com.likeazusa2.aeautopatterns.logic.PatternDeployment.Selection::id).collect(java.util.stream.Collectors.toSet());
-        var selectedTargets=uploadTargets.stream().filter(t->selectedIds.contains(com.likeazusa2.aeautopatterns.logic.PatternDeployment.identity(t.container()))).toList();
+        var selectedTargets=uploadTargets.stream().filter(t->selectionOrders.containsKey(PatternDeployment.identity(t.container()))).toList();
         tag.putInt("selectedOnlineProviders",selectedTargets.size());
         tag.putInt("uploadFreeSlots",selectedTargets.stream().mapToInt(com.likeazusa2.aeautopatterns.logic.PatternDeployment.Target::freeSlots).sum());
         tag.putString("adapterCapabilities",terminal.adapterCapabilities().stream().map(Enum::name).sorted().collect(java.util.stream.Collectors.joining(",")));
@@ -388,18 +532,16 @@ public final class AutoPatternMenu extends AEBaseMenu {
                 tag.putInt("probabilisticOutputs",adapted.probabilisticOutputs().size());
                 tag.putBoolean("hasRecipeWarnings",adapted.hasWarnings());
             }
-            if(n!=null&&!n.choice().ingredients().isEmpty()) {
-                ingredient=Math.min(ingredient,n.choice().ingredients().size()-1);tag.putInt("ingredient",ingredient+1);tag.putInt("ingredients",n.choice().ingredients().size());
-                tag.putString("input",n.children().get(ingredient).getDisplayName().getString());
-                if(treeReady()) {
-                    var fluidSlots=terminal.fluidInputs(key);
-                    tag.putBoolean("inputFluid",fluidSlots.contains(ingredient));
-                    var fluidIds=fluidSlots.stream().map(i->keyIds.getOrDefault(n.children().get(i),-1)).mapToInt(Integer::intValue).distinct().toArray();
-                    tag.putIntArray("fluidMaterials",fluidIds);
+            if (n != null && !n.children().isEmpty()) {
+                tag.putInt("ingredients", n.children().size());
+                tag.putBoolean("canEditIngredients", treeReady() && n.choice().kind() == DependencyPlanner.Kind.GENERATE);
+                if (treeReady()) {
+                    var fluidSlots = terminal.fluidInputs(key);
+                    tag.putBoolean("inputFluid", !fluidSlots.isEmpty());
+                    var fluidIds = fluidSlots.stream().map(i -> keyIds.getOrDefault(n.children().get(i), -1))
+                        .mapToInt(Integer::intValue).distinct().toArray();
+                    tag.putIntArray("fluidMaterials", fluidIds);
                 }
-                // Use unfiltered alternatives so a manually locked ingredient can be cycled again.
-                int count=terminal.options(key).stream().filter(c->c.id().equals(n.choice().id())).findFirst().map(c->c.ingredients().get(ingredient).size()).orElse(0);
-                tag.putInt("variants",count);
             }
         }
         PacketDistributor.sendToPlayer(sp,new TerminalPackets.Snapshot(containerId,tag));
@@ -407,7 +549,7 @@ public final class AutoPatternMenu extends AEBaseMenu {
     private void locateMaterial(List<AEKey> keys,AEKey key) {
         if(key==null)return;
         int id=keys.indexOf(key);if(id<0)return;
-        selected=id;ingredient=0;collapsed.clear();rowsDirty=true;
+        selected=id;collapsed.clear();rowsDirty=true;
         var visible=new ArrayList<Row>();flatten(terminal.target(),0,new HashSet<>(),visible);
         var present=new HashSet<AEKey>();visible.forEach(row->present.add(row.key()));
         for(var material:keys)if(present.add(material))visible.add(new Row(material,0));

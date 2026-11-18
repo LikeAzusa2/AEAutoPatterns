@@ -30,6 +30,7 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
     private DependencyTreeView tree;
     private ProviderSelectionView providers;
     private final RecipeSelectionView picker;
+    private final IngredientSelectionView ingredients;
     private ToggleButton substitutions,fluidSubstitutions;
     private int pendingWidth;
     private boolean showPendingInline;
@@ -49,6 +50,7 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
     public AutoPatternScreen(AutoPatternMenu menu,Inventory inv,Component title) {
         super(menu,inv,title);imageWidth=386;imageHeight=270;inventoryLabelY=-100;
         picker=new RecipeSelectionView(menu,this::send);
+        ingredients=new IngredientSelectionView(menu,this::send);
     }
     private Component tr(String key) { return Component.translatable("gui.aeautopatterns."+key); }
     private void send(String action,int index,String value) {
@@ -99,7 +101,7 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
         treeButton=addRenderableWidget(new TerminalButton(leftPos+138,topPos+20,60,12,tr("tree.open"),b->{
             if(!menu.view.getBoolean("treeReady"))return;
             search.setFocused(false);menu.treeNodes.clear();menu.treeRevision=-1;menu.treeTotal=0;menu.treeLimited=false;
-            tree=new DependencyTreeView(menu,(action,index)->send(action,index,""),this::closeTree,width,height);
+            tree=new DependencyTreeView(menu,(action,index)->send(action,index,""),this::closeTree,ingredients::request,width,height);
             send("tree_open",0,"");
         }));
         if(tree!=null)tree.resize(width,height);
@@ -128,9 +130,7 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
         });
         recipe=button(208,70,82,"recipe",()->send("recipe",0,""));
         external=button(294,70,82,"external",()->send("external",0,""));
-        button(208,88,22,"previous",()->send("slot",-1,""));
-        variant=button(233,88,118,"variant",()->send("ingredient",0,""));
-        button(354,88,22,"next",()->send("slot",1,""));
+        variant=button(208,88,168,"variant",ingredients::request);
         button(8,118,89,"analyze",()->{search.setValue("");send("analyze",0,"");});
         start=button(101,118,89,"start",()->send("start",0,""));
         pause=button(194,118,89,"pause",()->send("pause",0,""));
@@ -155,7 +155,7 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
         uploadTarget.active=true;
         start.active=state.equals("READY")||state.equals("PAUSED");
         pause.active=Set.of("RUNNING","NO_BLANKS","FULL","OFFLINE","VALIDATING").contains(state);
-        recipe.active=menu.view.getInt("recipes")>1;variant.active=menu.view.getInt("variants")>1;
+        recipe.active=menu.view.getInt("recipes")>1;variant.active=menu.view.getBoolean("canEditIngredients");
         external.active=menu.view.contains("selected");
     }
     private void text(GuiGraphics g,String value,int x,int y,int color,int width) {
@@ -231,7 +231,8 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
         }
         if(menu.view.getBoolean("inputFluid")&&fluidSubstitutions.isHovered())
             g.fill(leftPos+207,topPos+105,leftPos+377,topPos+114,0xff7ac25f);
-        text(g,menu.view.getInt("ingredient")+"/"+menu.view.getInt("ingredients")+" "+menu.view.getString("input"),208,106,TEXT,168);
+        if (menu.view.getInt("ingredients") > 0)
+            text(g, Component.translatable("gui.aeautopatterns.ingredient.count", menu.view.getInt("ingredients")).getString(),208,106,TEXT,168);
         String state=menu.view.getString("state");
         String progress=state.equals("ANALYZING")
             ?tr("state."+state).getString()+" · "+tr("phase."+menu.view.getString("analysisPhase")).getString()+" · "+menu.view.getInt("analysisMaterials")
@@ -339,6 +340,14 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
         g.drawString(font,title,8,10,TEXT,false);
     }
     @Override public void render(GuiGraphics g,int mx,int my,float partial) {
+        if (ingredients.open()) {
+            renderTerminal(g, -1, -1, partial);
+            ingredients.render(g, mx, my, partial, width, height);
+            return;
+        }
+        renderTerminal(g, mx, my, partial);
+    }
+    private void renderTerminal(GuiGraphics g,int mx,int my,float partial) {
         if(providers!=null){providers.render(g,mx,my,partial);return;}
         boolean showBulk=tree==null&&(pendingWidth>0||pendingInline());
         pendingSelectAll.visible=showBulk;pendingMakeExternal.visible=showBulk;
@@ -400,6 +409,7 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
     }
     @Override public boolean mouseClicked(double mx,double my,int button) {
         if(providers!=null)return providers.click(mx,my,button);
+        if(ingredients.open())return ingredients.click(mx,my,button);
         if(picker.open())return picker.click(mx,my,button);
         if(tree!=null)return tree.mouseClicked(mx,my,button);
         int scrollCount=search.getValue().isBlank()?menu.view.getInt("rowCount"):results.size();
@@ -446,7 +456,7 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
     }
     @Override public boolean mouseScrolled(double mx,double my,double horizontal,double vertical) {
         if(providers!=null)return providers.scroll(vertical);
-        if(picker.open())return true;
+        if(ingredients.open()||picker.open())return true;
         if(tree!=null)return tree.mouseScrolled(mx,my,vertical);
         if(pendingRowAt(mx,my)>=0) {
             if(vertical!=0)send("pending_scroll",vertical>0?-1:1,pendingWidth==0?"compact":"wide");
@@ -469,26 +479,27 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
     }
     private void closeTree() {tree=null;send("tree_close",0,"");}
     private void closeProviders() {providers=null;send("providers_close",0,"");}
-    @Override public void onClose() {if(providers!=null)closeProviders();else if(picker.open())picker.close();else if(tree!=null)closeTree();else super.onClose();}
+    @Override public void onClose() {if(ingredients.open())ingredients.close();else if(providers!=null)closeProviders();else if(picker.open())picker.close();else if(tree!=null)closeTree();else super.onClose();}
     @Override public boolean charTyped(char character,int mods) {
         if(providers!=null)return providers.character(character,mods);
+        if(ingredients.open()){ingredients.character(character,mods);return true;}
         if(picker.open())return true;
         return tree!=null?tree.charTyped(character,mods):super.charTyped(character,mods);
     }
     @Override public boolean mouseDragged(double mx,double my,int button,double dx,double dy) {
         if(providers!=null)return true;
         if(draggingRows&&button==0){dragRowsTo(my);return true;}
-        if(picker.open())return true;
+        if(ingredients.open()||picker.open())return true;
         return tree!=null?tree.mouseDragged(dx,dy):super.mouseDragged(mx,my,button,dx,dy);
     }
     @Override public boolean mouseReleased(double mx,double my,int button) {
         if(providers!=null)return true;
         if(draggingRows&&button==0){dragRowsTo(my);draggingRows=false;return true;}
-        if(picker.open())return true;
+        if(ingredients.open()||picker.open())return true;
         return tree!=null?tree.mouseReleased():super.mouseReleased(mx,my,button);
     }
     private void dragRowsTo(double mouseY) {
-        if(tree!=null||picker.open()||pendingInline()||draggingSearch!=!search.getValue().isBlank()
+        if(tree!=null||ingredients.open()||picker.open()||pendingInline()||draggingSearch!=!search.getValue().isBlank()
             ||rowDragRevision!=menu.view.getInt("revision")) {draggingRows=false;return;}
         int count=draggingSearch?results.size():menu.view.getInt("rowCount");
         int max=Math.max(0,count-AutoPatternMenu.VISIBLE_ROWS);
@@ -502,6 +513,7 @@ public final class AutoPatternScreen extends AbstractContainerScreen<AutoPattern
     }
     @Override public boolean keyPressed(int key,int scan,int mods) {
         if(providers!=null){providers.key(key,scan,mods);return true;}
+        if(ingredients.open()){ingredients.key(key,scan,mods);return true;}
         if(picker.open()){if(key==256)picker.close();return true;}
         if(tree!=null) {if(key==256){if(!tree.dismissSelection())closeTree();return true;}return tree.keyPressed(key,scan,mods);}
         if(search.isFocused()&&key!=256)return search.keyPressed(key,scan,mods)||search.canConsumeInput();
