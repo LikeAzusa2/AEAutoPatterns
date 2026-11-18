@@ -18,6 +18,7 @@ final class ProviderSelectionView {
     private final Runnable back;
     private final List<TerminalButton> buttons=new ArrayList<>();
     private EditBox search;
+    private RecipeRouteView routes;
     private int x,y,width,height;
     private String detailId="";
     private CompoundTag detail=new CompoundTag();
@@ -39,11 +40,15 @@ final class ProviderSelectionView {
         search.setBordered(false);search.setTextColor(TEXT);search.setTextColorUneditable(MUTED);
         search.setMaxLength(80);search.setHint(tr("search"));search.setValue(query);
         search.setResponder(value->action.send("provider_search",0,value));
+        if(routes!=null)routes.resize(width,height);
     }
-    private void button(int bx,int by,int w,int h,Component text,Runnable press) {
-        buttons.add(new TerminalButton(bx,by,w,h,text,b->press.run()));
+    private TerminalButton button(int bx,int by,int w,int h,Component text,Runnable press) {
+        var widget=new TerminalButton(bx,by,w,h,text,b->press.run());
+        buttons.add(widget);
+        return widget;
     }
     void render(GuiGraphics g,int mx,int my,float partial) {
+        if(routes!=null){routes.render(g,mx,my,partial);return;}
         g.fill(0,0,width,height,0xb0000000);bevel(g,x,y,360,252,PANEL,false);
         g.drawString(mc.font,tr("title"),x+12,y+11,TEXT,false);
         String selected=tr("selected",menu.view.getInt("selectedProviderCount")).getString();
@@ -83,8 +88,9 @@ final class ProviderSelectionView {
         String page=(offset/6+1)+" / "+pages;
         g.drawCenteredString(mc.font,page,x+180,y+230,TEXT);
         button(x+227,y+225,28,17,Component.literal("→"),()->action.send("provider_page",1,""));
-        String hint=tr("details").getString();
-        g.drawString(mc.font,mc.font.plainSubstrByWidth(hint,80),x+268,y+230,MUTED,false);
+        var routeButton=button(x+268,y+225,80,17,Component.translatable("gui.aeautopatterns.routes.open"),this::openRoutes);
+        routeButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+            Component.translatable("gui.aeautopatterns.routes.open.help")));
         if(!detailId.isEmpty()) {
             renderDetails(g,mx,my,partial);return;
         }
@@ -133,6 +139,7 @@ final class ProviderSelectionView {
         g.renderTooltip(mc.font,text,mx,my);
     }
     boolean click(double mx,double my,int button) {
+        if(routes!=null)return routes.click(mx,my,button);
         for(var widget:buttons)if(widget.mouseClicked(mx,my,button))return true;
         if(!detailId.isEmpty())return true;
         if(mx>=x+12&&mx<x+348&&my>=y+30&&my<y+46) {
@@ -151,11 +158,25 @@ final class ProviderSelectionView {
         return true;
     }
     boolean scroll(double amount) {
+        if(routes!=null)return routes.scroll(amount);
         if(detailId.isEmpty()&&amount!=0)action.send("provider_page",amount>0?-1:1,"");return true;
     }
     boolean key(int key,int scan,int mods) {
+        if(routes!=null)return routes.key(key,scan,mods);
         if(key==256){if(detailId.isEmpty())back.run();else detailId="";return true;}
         return detailId.isEmpty()&&(search.keyPressed(key,scan,mods)||search.canConsumeInput());
     }
-    boolean character(char character,int mods){return detailId.isEmpty()&&search.charTyped(character,mods);}
+    boolean character(char character,int mods){
+        if(routes!=null)return routes.character(character,mods);
+        return detailId.isEmpty()&&search.charTyped(character,mods);
+    }
+    private void openRoutes() {
+        action.send("route_open",0,"");
+        routes=new RecipeRouteView(menu,action,this::closeRoutes,width,height);
+    }
+    private void closeRoutes() {
+        if(routes==null)return;
+        routes=null;
+        action.send("route_close",0,"");
+    }
 }

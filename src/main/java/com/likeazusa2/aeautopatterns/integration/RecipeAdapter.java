@@ -20,5 +20,7 @@ public interface RecipeAdapter {
     default boolean unsupported(AEKey output) { return false; }
     List<DependencyPlanner.Choice<AEKey,PatternRecipe>> find(AEKey output);
     ItemStack encode(PatternRecipe recipe, List<AEKey> inputs, AEKey expected, Level level);
+    /** Authoritative processing catalog for route discovery; call after indexing is complete. */
+    default List<PatternRecipe> processingRecipes() { return List.of(); }
     default String describe(PatternRecipe recipe) { return recipe.adapted() == null ? "" : recipe.adapted().recipeId().toString(); }
 }

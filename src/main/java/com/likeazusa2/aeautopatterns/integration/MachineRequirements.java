@@ -11,4 +11,9 @@ public record MachineRequirements(ResourceLocation machineType, List<String> con
         conditions = conditions == null ? List.of() : List.copyOf(conditions);
     }
     public static MachineRequirements none(ResourceLocation machineType) { return new MachineRequirements(machineType, List.of()); }
+    /** Stable translation-key convention for machine labels exposed in pattern lore. */
+    public String translationKey() {
+        return "gui.aeautopatterns.routes.machine." + machineType.getNamespace() + "."
+                + machineType.getPath().replace('/', '.');
+    }
 }

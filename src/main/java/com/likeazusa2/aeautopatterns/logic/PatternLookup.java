@@ -17,7 +17,8 @@ public final class PatternLookup {
     public PatternLookup(IGrid grid, Level level, ItemStackHandler inventory) { this.grid=grid;this.level=level;this.inventory=inventory; }
     public List<DependencyPlanner.Choice<AEKey,PatternRecipe>> find(AEKey key) {
         var result=new ArrayList<DependencyPlanner.Choice<AEKey,PatternRecipe>>();
-        if(grid!=null) for(var pattern:grid.getCraftingService().getCraftingFor(key)) add(result,pattern,DependencyPlanner.Kind.NETWORK);
+        if(grid!=null) for(var pattern:grid.getCraftingService().getCraftingFor(key))
+            if(primaryOutputMatches(pattern,key)) add(result,pattern,DependencyPlanner.Kind.NETWORK);
         for(int i=1;i<inventory.getSlots();i++) {
             int at=i-1;var stack=inventory.getStackInSlot(i);
             if(snapshot.size()<=at){snapshot.add(stack.copy());decoded.add(PatternDetailsHelper.decodePattern(stack,level));}
@@ -25,7 +26,7 @@ public final class PatternLookup {
                 snapshot.set(at,stack.copy());decoded.set(at,PatternDetailsHelper.decodePattern(stack,level));presence.clear();
             }
             var pattern=decoded.get(at);
-            if(pattern!=null && pattern.getOutputs().stream().anyMatch(out->out.what().equals(key))) add(result,pattern,DependencyPlanner.Kind.BUFFER);
+            if(primaryOutputMatches(pattern,key)) add(result,pattern,DependencyPlanner.Kind.BUFFER);
         }
         result.sort(Comparator.comparing((DependencyPlanner.Choice<AEKey,PatternRecipe> c)->c.kind().ordinal()).thenComparing(DependencyPlanner.Choice::id));
         return result;
@@ -36,6 +37,17 @@ public final class PatternLookup {
         var ingredients=new ArrayList<List<AEKey>>();
         for(var in:pattern.getInputs()) ingredients.add(Arrays.stream(in.getPossibleInputs()).map(GenericStack::what).distinct().toList());
         list.add(new DependencyPlanner.Choice<>(id,kind,ingredients,new PatternRecipe(null,pattern.getDefinition().toStack(),null)));
+    }
+    private static boolean primaryOutputMatches(IPatternDetails pattern,AEKey key) {
+        if(pattern==null||key==null)return false;
+        try {
+            var outputs=pattern.getOutputs();
+            if(outputs==null||outputs.isEmpty())return false;
+            var primary=pattern.getPrimaryOutput();
+            return primary!=null&&key.equals(primary.what());
+        } catch(RuntimeException ignored) {
+            return false;
+        }
     }
     public boolean exists(AEKey key) { return !find(key).isEmpty(); }
     public boolean existsCached(AEKey key){return presence.computeIfAbsent(key,this::exists);}

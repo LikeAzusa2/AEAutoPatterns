@@ -17,6 +17,8 @@ public final class ProcessingRecipeAdapter implements RecipeAdapter {
     private final Level level;
     private final Iterator<RecipeHolder<?>> pending;
     private final Map<AEKey,List<RecipeHolder<?>>> index=new HashMap<>();
+    private final List<PatternRecipe> catalog=new ArrayList<>();
+    private List<PatternRecipe> catalogSnapshot;
     public ProcessingRecipeAdapter(Level level) {
         this.level=level;
         pending=level.getRecipeManager().getRecipes().iterator();
@@ -27,10 +29,14 @@ public final class ProcessingRecipeAdapter implements RecipeAdapter {
             if(recipe.getClass()!=SmeltingRecipe.class&&recipe.getClass()!=BlastingRecipe.class
                 &&recipe.getClass()!=SmokingRecipe.class&&recipe.getClass()!=CampfireCookingRecipe.class)continue;
             var output=recipe.getResultItem(level.registryAccess());
-            if(!output.isEmpty()&&recipe.getIngredients().size()==1&&!recipe.getIngredients().getFirst().isEmpty())
+            if(!output.isEmpty()&&recipe.getIngredients().size()==1&&!recipe.getIngredients().getFirst().isEmpty()) {
                 index.computeIfAbsent(AEItemKey.of(output),k->new ArrayList<>()).add(holder);
+                catalog.add(new PatternRecipe(holder,ItemStack.EMPTY,this));
+            }
         }
-        return !pending.hasNext();
+        if(pending.hasNext())return false;
+        if(catalogSnapshot==null)catalogSnapshot=List.copyOf(catalog);
+        return true;
     }
     public boolean hasRecipe(AEKey key) {return index.containsKey(key);}
     @Override public String adapterId() { return "aeautopatterns:vanilla-processing"; }
@@ -46,6 +52,9 @@ public final class ProcessingRecipeAdapter implements RecipeAdapter {
                 List.of(inputs),new PatternRecipe(holder,ItemStack.EMPTY,this)));
         }
         result.sort(Comparator.comparing(DependencyPlanner.Choice::id));return result;
+    }
+    @Override public List<PatternRecipe> processingRecipes() {
+        return catalogSnapshot==null?List.of():catalogSnapshot;
     }
     @Override public ItemStack encode(PatternRecipe payload,List<AEKey> inputs,AEKey expected,Level level) {
         if(level.getRecipeManager().byKey(payload.recipe().id()).orElse(null)!=payload.recipe())

@@ -1,17 +1,15 @@
 package com.likeazusa2.aeautopatterns.integration;
 
 import net.minecraft.world.level.Level;
+import net.neoforged.fml.ModList;
 
-/** Optional bridge enabled only when both Mekanism and Applied Mekanistics register chemical AE keys. */
+/** Explicit Mekanism item processing plus Applied Mekanistics chemical conversion. */
 public final class MekanismRecipeAdapterProvider implements RecipeAdapterProvider {
-    @Override public String adapterId(){return "aeautopatterns:applied-mekanistics";}
-    @Override public int priority(){return 60;}
-    @Override public RecipeAdapter create(Level level,RecipeAdapter.Settings settings){
-        if(!loaded("mekanism")||!loaded("appmek"))return null;
-        return new MekanismChemicalRecipeAdapter(level);
-    }
-    private static boolean loaded(String id){
-        try { var list=Class.forName("net.neoforged.fml.ModList").getMethod("get").invoke(null);return (boolean)list.getClass().getMethod("isLoaded",String.class).invoke(list,id); }
-        catch(Exception e){return false;}
+    @Override public String adapterId() { return "aeautopatterns:mekanism-processing"; }
+    @Override public int priority() { return 60; }
+
+    @Override public RecipeAdapter create(Level level, RecipeAdapter.Settings settings) {
+        if (!settings.allowProcessing() || !ModList.get().isLoaded("mekanism")) return null;
+        return new MekanismChemicalRecipeAdapter(level, ModList.get().isLoaded("appmek"));
     }
 }

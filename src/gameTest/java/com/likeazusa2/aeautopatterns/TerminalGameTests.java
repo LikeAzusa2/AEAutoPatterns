@@ -90,7 +90,7 @@ public final class TerminalGameTests {
             .thenExecute(()->{
                 check(be.inventory().getStackInSlot(0).getCount()==7,"Exactly one inserted pattern consumes one blank");
                 check(PatternDeployment.freeSlots(second)==second.getTerminalPatternInventory().size()-1,"Fallback holds exactly one pattern");
-                for(int i=1;i<28;i++)check(be.inventory().getStackInSlot(i).isEmpty(),"Automatic upload does not also fill local buffer");
+                for(int i=1;i<=AutoPatternTerminalPart.OUTPUT_PATTERN_SLOTS;i++)check(be.inventory().getStackInSlot(i).isEmpty(),"Automatic upload does not also fill local buffer");
             }).thenSucceed();
     }
     @GameTest(template="empty",timeoutTicks=400)
@@ -206,7 +206,7 @@ public final class TerminalGameTests {
                 be.startOrResume();
             }).thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.COMPLETE,"Encoding: "+be.state()+" "+be.error()))
             .thenExecute(()->{
-                int count=0;for(int i=1;i<28;i++) {
+                int count=0;for(int i=1;i<=AutoPatternTerminalPart.OUTPUT_PATTERN_SLOTS;i++) {
                     var stack=be.inventory().getStackInSlot(i);count+=stack.getCount();
                     if(!stack.isEmpty())check(PatternDetailsHelper.decodePattern(stack,h.getLevel())!=null,"Pattern must decode");
                 }
@@ -240,7 +240,7 @@ public final class TerminalGameTests {
     @GameTest(template="empty",timeoutTicks=400,batch="reload")
     public void fullOutputAndDatapackInvalidation(GameTestHelper h) {
         var be=setup(h);be.setTarget(AEItemKey.of(Items.STICK));be.inventory().setStackInSlot(0,AEItems.BLANK_PATTERN.stack(16));
-        for(int i=1;i<28;i++)be.inventory().setStackInSlot(i,new ItemStack(Items.COBBLESTONE,64));
+        for(int i=1;i<=AutoPatternTerminalPart.OUTPUT_PATTERN_SLOTS;i++)be.inventory().setStackInSlot(i,new ItemStack(Items.COBBLESTONE,64));
         h.startSequence().thenWaitUntil(()->check(be.online(),"Network online"))
             .thenExecute(be::analyze)
             .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.WAITING_SELECTION,"Sticks have plank and bamboo recipes"))
@@ -342,7 +342,7 @@ public final class TerminalGameTests {
         var output=((appeng.blockentity.crafting.IMolecularAssemblerSupportedPattern)decoded).assemble(
             net.minecraft.world.item.crafting.CraftingInput.of(3,3,Arrays.asList(grid)),h.getLevel());
         check(key.equals(AEItemKey.of(output))&&output.getCount()==count,"Assembler recipe executes with exact output components and count");
-        var inv=new net.neoforged.neoforge.items.ItemStackHandler(28);inv.setStackInSlot(1,encoded);
+        var inv=new net.neoforged.neoforge.items.ItemStackHandler(AutoPatternTerminalPart.OUTPUT_PATTERN_SLOTS + 1);inv.setStackInSlot(1,encoded);
         check(new PatternLookup(null,h.getLevel(),inv).exists(key),"Output buffer deduplicates workstation pattern");
     }
 
@@ -365,7 +365,7 @@ public final class TerminalGameTests {
             check(net.minecraft.ChatFormatting.AQUA.getColor().equals(lore.lines().getFirst().getStyle().getColor().getValue()),"Recipe ID highlighted aqua");
             var restored=ItemStack.parseOptional(h.getLevel().registryAccess(),(net.minecraft.nbt.CompoundTag)stack.save(h.getLevel().registryAccess()));
             check(ItemStack.isSameItemSameComponents(restored,stack),"Recipe lore survives item persistence");
-            var buffer=new net.neoforged.neoforge.items.ItemStackHandler(28);buffer.setStackInSlot(1,restored);
+            var buffer=new net.neoforged.neoforge.items.ItemStackHandler(AutoPatternTerminalPart.OUTPUT_PATTERN_SLOTS + 1);buffer.setStackInSlot(1,restored);
             check(new PatternLookup(null,h.getLevel(),buffer).exists(key),"Annotated processing pattern deduplicates");
             boolean rejected=false;try {
                 choice.payload().adapter().encode(choice.payload(),List.of(AEItemKey.of(Items.DIRT)),key,h.getLevel());
@@ -385,13 +385,16 @@ public final class TerminalGameTests {
         h.startSequence().thenWaitUntil(()->check(be.online(),"Online"))
             .thenExecute(be::analyze).thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Default plan ready"))
             .thenExecute(()->{check(be.total()==0,"Off produces no cooking patterns");be.toggleProcessing();})
-            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Enabled plan ready: "+be.error()))
-            .thenExecute(()->{check(be.total()==1,"Exactly one cooking recipe selected");be.nextRecipe(be.target());})
-            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Selected alternate cooking route"))
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.WAITING_SELECTION,"Multiple processing routes require a choice: "+be.error()))
+            .thenExecute(()->{check(be.recipeOptions(be.target()).size()==3,"Three distinct cooking routes");be.nextRecipe(be.target());})
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Selected cooking route"))
+            .thenExecute(()->check(be.total()==1,"Exactly one cooking recipe selected"))
             .thenExecute(be::toggleProcessing)
             .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Disabling clears only cooking route lock"))
             .thenExecute(()->{check(be.total()==0,"Disabled again no generation");be.toggleProcessing();})
-            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Enabled again"))
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.WAITING_SELECTION,"Enabled again"))
+            .thenExecute(()->be.nextRecipe(be.target()))
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Enabled again with an explicit route"))
             .thenExecute(be::startOrResume)
             .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.COMPLETE,"Processing completes: "+be.error()))
             .thenExecute(()->{
@@ -404,6 +407,52 @@ public final class TerminalGameTests {
             }).thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Existing processing pattern reusable when disabled"))
             .thenExecute(()->check(be.total()==0&&be.inventory().getStackInSlot(0).getCount()==3,"Disabling keeps results and does not consume blanks"))
             .thenSucceed();
+    }
+
+    @GameTest(template="empty",timeoutTicks=400)
+    public void processingAutoUploadWithoutProviderUsesOutputBuffer(GameTestHelper h) {
+        var be=setup(h);be.setTarget(AEItemKey.of(Items.BAKED_POTATO));be.setAutoUpload(true);
+        be.inventory().setStackInSlot(0,AEItems.BLANK_PATTERN.stack(2));
+        h.startSequence().thenWaitUntil(()->check(be.online(),"Online"))
+            .thenExecute(be::analyze)
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Default plan ready: "+be.state()+" "+be.error()))
+            .thenExecute(be::toggleProcessing)
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.WAITING_SELECTION,"Processing route selection required: "+be.state()+" "+be.error()))
+            .thenExecute(()->be.nextRecipe(be.target()))
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Processing route selected: "+be.state()+" "+be.error()))
+            .thenExecute(be::startOrResume)
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.COMPLETE,"Missing provider must not pause: "+be.state()+" "+be.error()))
+            .thenExecute(()->{
+                check(be.uploadTargets().isEmpty(),"Fixture must have no pattern provider");
+                check(be.inventory().getStackInSlot(0).getCount()==1,"Local fallback must consume exactly one blank");
+                check(AEItems.PROCESSING_PATTERN.is(be.inventory().getStackInSlot(1)),"Missing provider must retain the processing pattern in the output buffer");
+                check(be.uploadStatus().contains("output buffer"),"Fallback status must explain local buffering");
+            }).thenSucceed();
+    }
+
+    @GameTest(template="empty",timeoutTicks=500)
+    public void processingAutoUploadOfflineSelectionDoesNotFillOutputBuffer(GameTestHelper h) {
+        var be=setup(h);h.setBlock(TERMINAL.east(),AEBlocks.PATTERN_PROVIDER.block());
+        var provider=(appeng.blockentity.crafting.PatternProviderBlockEntity)h.getBlockEntity(TERMINAL.east());
+        h.startSequence().thenWaitUntil(()->check(be.online()&&be.uploadTargets().size()==1,"Provider online"))
+            .thenExecute(()->{
+                be.configureProvider(PatternDeployment.identity(provider),"single");
+                h.setBlock(TERMINAL.east(),net.minecraft.world.level.block.Blocks.AIR);
+            })
+            .thenWaitUntil(()->check(be.uploadTargets().isEmpty(),"Selected provider must be offline"))
+            .thenExecute(()->{
+                be.setTarget(AEItemKey.of(Items.BAKED_POTATO));be.toggleProcessing();be.setAutoUpload(true);
+                be.inventory().setStackInSlot(0,AEItems.BLANK_PATTERN.stack(2));be.analyze();
+            })
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.WAITING_SELECTION,"Processing route selection required: "+be.state()+" "+be.error()))
+            .thenExecute(()->be.nextRecipe(be.target()))
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Processing route selected: "+be.state()+" "+be.error()))
+            .thenExecute(be::startOrResume)
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.OFFLINE,"Offline selected provider must remain a failure: "+be.state()+" "+be.error()))
+            .thenExecute(()->{
+                check(be.inventory().getStackInSlot(0).getCount()==2,"Offline selected provider must not consume a blank");
+                for(int i=1;i<=AutoPatternTerminalPart.OUTPUT_PATTERN_SLOTS;i++)check(be.inventory().getStackInSlot(i).isEmpty(),"Offline selected provider must not fill the output buffer");
+            }).thenSucceed();
     }
 
     @GameTest(template="empty",timeoutTicks=200)
@@ -486,16 +535,83 @@ public final class TerminalGameTests {
         h.succeed();
     }
     @GameTest(template="empty",timeoutTicks=100)
-    public void mixedFluidPatternCacheRetainsSecondaryOutputAndDetectsRemoval(GameTestHelper h) {
-        var water=AEFluidKey.of(net.minecraft.world.level.material.Fluids.WATER);var iron=AEItemKey.of(Items.IRON_INGOT);var gold=AEItemKey.of(Items.GOLD_INGOT);
-        var stack=PatternDetailsHelper.encodeProcessingPattern(List.of(new GenericStack(water,1000),new GenericStack(iron,2)),List.of(new GenericStack(gold,3),new GenericStack(water,250)));
-        var inv=new net.neoforged.neoforge.items.ItemStackHandler(28);inv.setStackInSlot(1,stack);
+    public void onlyPrimaryBufferOutputsCountAsExistingPatterns(GameTestHelper h) {
+        var primary=AEItemKey.of(Items.IRON_INGOT);var secondary=AEItemKey.of(Items.GOLD_INGOT);
+        var stack=PatternDetailsHelper.encodeProcessingPattern(
+            List.of(new GenericStack(AEItemKey.of(Items.RAW_IRON),1)),
+            List.of(new GenericStack(primary,3),new GenericStack(secondary,2)));
+        var inv=new net.neoforged.neoforge.items.ItemStackHandler(AutoPatternTerminalPart.OUTPUT_PATTERN_SLOTS + 1);inv.setStackInSlot(1,stack);
         var lookup=new PatternLookup(null,h.getLevel(),inv);
-        check(lookup.exists(gold)&&lookup.exists(water),"All deterministic outputs can reuse the buffered pattern");
         var decoded=PatternDetailsHelper.decodePattern(stack,h.getLevel());
-        check(decoded.getOutputs().get(1).amount()==250,"AE fluid quantity round-trips exactly");
+        check(decoded!=null&&decoded.getOutputs().size()==2,"Secondary output remains in decoded recipe detail");
+        check(decoded.getPrimaryOutput().what().equals(primary)&&decoded.getPrimaryOutput().amount()==3,"Primary output round-trips exactly");
+        check(decoded.getOutputs().get(1).what().equals(secondary)&&decoded.getOutputs().get(1).amount()==2,"Secondary output quantity round-trips exactly");
+        check(lookup.exists(primary),"Primary buffer output must count as reusable");
+        check(!lookup.exists(secondary),"Secondary buffer output must not count as reusable");
         inv.setStackInSlot(1,ItemStack.EMPTY);
-        check(!lookup.exists(water)&&!lookup.exists(gold),"Changed buffer slots must be decoded again");
+        check(!lookup.exists(primary)&&!lookup.exists(secondary),"Changed buffer slots must be decoded again");
         h.succeed();
+    }
+
+    @GameTest(template="empty",timeoutTicks=400)
+    public void secondaryBufferOutputDoesNotSkipTerminalAnalysis(GameTestHelper h) {
+        var be=setup(h);
+        var primary=AEItemKey.of(Items.IRON_INGOT);var target=AEItemKey.of(Items.CRAFTING_TABLE);
+        var stack=PatternDetailsHelper.encodeProcessingPattern(
+            List.of(new GenericStack(AEItemKey.of(Items.DIRT),1)),
+            List.of(new GenericStack(primary,2),new GenericStack(target,1)));
+        be.inventory().setStackInSlot(1,stack);be.setTarget(target);
+        h.startSequence().thenWaitUntil(()->check(be.online(),"Network ready"))
+            .thenExecute(be::analyze)
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Analysis ready: "+be.state()+" "+be.error()))
+            .thenExecute(()->{
+                var root=be.nodes().get(target);
+                check(root!=null,"Target must be analyzed");
+                check(root.choice().kind()==DependencyPlanner.Kind.GENERATE,"Secondary buffer output must not mark target reusable");
+                check(be.total()>0,"Terminal must still plan the secondary target recipe");
+            }).thenSucceed();
+    }
+
+    @GameTest(template="empty",timeoutTicks=400)
+    public void onlyPrimaryNetworkOutputsCountAsExistingPatterns(GameTestHelper h) {
+        var be=setup(h);h.setBlock(TERMINAL.east(),AEBlocks.PATTERN_PROVIDER.block());
+        var provider=(appeng.blockentity.crafting.PatternProviderBlockEntity)h.getBlockEntity(TERMINAL.east());
+        var primary=AEItemKey.of(Items.IRON_INGOT);var secondary=AEItemKey.of(Items.CRAFTING_TABLE);
+        var pattern=PatternDetailsHelper.encodeProcessingPattern(
+            List.of(new GenericStack(AEItemKey.of(Items.DIRT),1)),
+            List.of(new GenericStack(primary,2),new GenericStack(secondary,1)));
+        h.startSequence().thenWaitUntil(()->check(be.online()&&provider.getMainNode().isActive(),"Network ready"))
+            .thenExecute(()->provider.getLogic().getPatternInv().setItemDirect(0,pattern))
+            .thenWaitUntil(()->check(be.node().getGrid().getCraftingService().isCraftable(primary),"Provider registers primary output"))
+            .thenExecute(()->{
+                var lookup=new PatternLookup(be.node().getGrid(),h.getLevel(),new net.neoforged.neoforge.items.ItemStackHandler(AutoPatternTerminalPart.OUTPUT_PATTERN_SLOTS + 1));
+                check(lookup.exists(primary),"Primary network output must count as reusable");
+                check(!lookup.exists(secondary),"Secondary network output must not count as reusable");
+                be.setTarget(secondary);be.analyze();
+            })
+            .thenWaitUntil(()->check(be.state()==AutoPatternTerminalPart.State.READY,"Analysis ready: "+be.state()+" "+be.error()))
+            .thenExecute(()->{
+                var root=be.nodes().get(secondary);
+                check(root!=null,"Secondary target must be analyzed");
+                check(root.choice().kind()==DependencyPlanner.Kind.GENERATE,"Secondary network output must not mark target reusable");
+                check(be.total()>0,"Terminal must still plan the secondary target recipe");
+            }).thenSucceed();
+    }
+
+    @GameTest(template="empty",timeoutTicks=300)
+    public void routeGroupsRequireExplicitProviderToggle(GameTestHelper h) {
+        var be=setup(h);h.setBlock(TERMINAL.east(),AEBlocks.PATTERN_PROVIDER.block());
+        var provider=(appeng.blockentity.crafting.PatternProviderBlockEntity)h.getBlockEntity(TERMINAL.east());
+        var providerId=PatternDeployment.identity(provider);
+        h.startSequence().thenWaitUntil(()->check(be.online()&&be.uploadTargets().size()==1,"Provider visible"))
+            .thenExecute(()->{
+                var groupId=be.createRecipeRouteGroup("Manual route");
+                check(groupId!=null,"Route group must be created");
+                check(be.recipeRouteGroups().getFirst().providerIds().isEmpty(),"Creating a group must not add providers");
+                check(be.addRecipesToRouteGroup(groupId,List.of(ResourceLocation.parse("minecraft:stick"))),"Recipe must be added");
+                check(be.recipeRouteGroups().getFirst().providerIds().isEmpty(),"Adding recipes must not add providers");
+                check(be.toggleRouteGroupProvider(groupId,providerId),"Explicit provider toggle must succeed");
+                check(be.recipeRouteGroups().getFirst().providerIds().equals(List.of(providerId)),"Only explicit toggle adds the provider");
+            }).thenSucceed();
     }
 }

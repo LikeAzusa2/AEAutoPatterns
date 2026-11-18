@@ -1,522 +1,1120 @@
 package com.likeazusa2.aeautopatterns.client;
 
-import java.util.*;
-import net.minecraft.client.Minecraft;
 import appeng.client.gui.Icon;
 import appeng.client.gui.widgets.ToggleButton;
 import appeng.core.localization.ButtonToolTips;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.*;
-import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.nbt.*;
-import net.minecraft.network.chat.Component;
-import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.item.*;
-import net.neoforged.neoforge.network.PacketDistributor;
 import com.likeazusa2.aeautopatterns.menu.AutoPatternMenu;
+import com.likeazusa2.aeautopatterns.part.AutoPatternTerminalPart;
 import com.likeazusa2.aeautopatterns.network.TerminalPackets;
-import static com.likeazusa2.aeautopatterns.client.TerminalStyle.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.renderer.Rect2i;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.Slot;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.neoforged.neoforge.network.PacketDistributor;
 
 public final class AutoPatternScreen extends AbstractContainerScreen<AutoPatternMenu> {
-    private static final int ROW_TOP=34, ROW_HEIGHT=18, ROW_BOTTOM=106;
-    private EditBox search;
-    private List<Item> results=List.of();
-    private int searchOffset;
-    private boolean draggingRows,draggingSearch;
-    private double rowDragGrab;
-    private int rowDragOffset,rowDragRevision;
-    private Button start,pause,recipe,external,variant,treeButton,processing,autoUpload,uploadTarget;
-    private DependencyTreeView tree;
-    private ProviderSelectionView providers;
-    private final RecipeSelectionView picker;
-    private final IngredientSelectionView ingredients;
-    private ToggleButton substitutions,fluidSubstitutions;
-    private int pendingWidth;
-    private boolean showPendingInline;
-    private Button pendingTab;
-    private Button ignoreComponents;
-    private Button pendingSelectAll,pendingMakeExternal;
-    private final Set<Integer> pendingSelection=new HashSet<>();
-    private int pendingSelectionRevision=-1;
-    void acceptJeiItem(ItemStack stack) {
-        if (stack == null || stack.isEmpty()) return;
-        var encoded=(net.minecraft.nbt.CompoundTag)stack.save(Minecraft.getInstance().level.registryAccess());
-        PacketDistributor.sendToServer(new TerminalPackets.JeiTarget(menu.containerId,menu.view.getInt("revision"),encoded));
-    }
-    net.minecraft.client.renderer.Rect2i jeiTargetArea() {
-        return new net.minecraft.client.renderer.Rect2i(leftPos+8,topPos+34,190,72);
-    }
-    public AutoPatternScreen(AutoPatternMenu menu,Inventory inv,Component title) {
-        super(menu,inv,title);imageWidth=386;imageHeight=270;inventoryLabelY=-100;
-        picker=new RecipeSelectionView(menu,this::send);
-        ingredients=new IngredientSelectionView(menu,this::send);
-    }
-    private Component tr(String key) { return Component.translatable("gui.aeautopatterns."+key); }
-    private void send(String action,int index,String value) {
-        PacketDistributor.sendToServer(new TerminalPackets.Action(menu.containerId,menu.view.getInt("revision"),action,index,value));
-    }
-    private Button button(int x,int y,int w,String label,Runnable click) {
-        return addRenderableWidget(new TerminalButton(leftPos+x,topPos+y,w,16,tr(label),v->click.run()));
-    }
-    @Override protected void init() {
-        String query=search==null?"":search.getValue();
-        super.init();
-        draggingRows=false;
-        // Center the combined panels only when a readable side column fits.
-        // On narrow scaled windows the queue shares the dependency viewport.
-        pendingWidth=width-imageWidth-18>=72?Math.min(112,width-imageWidth-18):0;
-        if(pendingWidth>0)leftPos=(width-imageWidth-pendingWidth-6)/2+pendingWidth+6;
-        send("pending_scroll",0,pendingWidth==0?"compact":"wide");
-        int controlsX=pendingWidth>0?-pendingWidth-2:8;
-        int controlsY=pendingWidth>0?49:34;
-        int controlsWidth=pendingWidth>0?pendingWidth-8:190;
-        int gap=3,buttonWidth=(controlsWidth-gap)/2;
-        pendingSelectAll=addRenderableWidget(new TerminalButton(leftPos+controlsX,topPos+controlsY,buttonWidth,14,
-            tr("pending.select_all"),b->toggleAllPending()));
-        pendingMakeExternal=addRenderableWidget(new TerminalButton(leftPos+controlsX+buttonWidth+gap,topPos+controlsY,
-            controlsWidth-buttonWidth-gap,14,tr("pending.make_external"),b->sendBulkExternal()));
-        PacketDistributor.sendToServer(new TerminalPackets.Action(menu.containerId,menu.view.getInt("revision"),
-            "jei_status",0,Boolean.toString(JeiCompat.available())));
-        search=new EditBox(font,leftPos+200,topPos+8,172,12,tr("search"));
-        search.setBordered(false);search.setTextColor(TEXT);search.setTextColorUneditable(MUTED);
-        search.setHint(tr("search"));search.setMaxLength(80);
-        search.setResponder(value->{
-            draggingRows=false;
-            searchOffset=0;
-            if(value.isBlank())results=List.of();
-            else {
-                var term=value.toLowerCase(Locale.ROOT);
-                results=BuiltInRegistries.ITEM.stream().filter(i->i!=Items.AIR&&
-                    (BuiltInRegistries.ITEM.getKey(i).toString().contains(term)||
-                    i.getDescription().getString().toLowerCase(Locale.ROOT).contains(term))).toList();
-            }
-        });
-        addRenderableWidget(search);
-        search.setValue(query);
-        pendingTab=addRenderableWidget(new TerminalButton(leftPos+8,topPos+20,126,12,tr("pending.title"),b->{
-            showPendingInline=!showPendingInline;if(showPendingInline)search.setValue("");
-        }));
-        pendingTab.visible=pendingWidth==0;
-        treeButton=addRenderableWidget(new TerminalButton(leftPos+138,topPos+20,60,12,tr("tree.open"),b->{
-            if(!menu.view.getBoolean("treeReady"))return;
-            search.setFocused(false);menu.treeNodes.clear();menu.treeRevision=-1;menu.treeTotal=0;menu.treeLimited=false;
-            tree=new DependencyTreeView(menu,(action,index)->send(action,index,""),this::closeTree,ingredients::request,width,height);
-            send("tree_open",0,"");
-        }));
-        if(tree!=null)tree.resize(width,height);
-        if(providers!=null)providers.resize(width,height);
-        ignoreComponents=addRenderableWidget(new TerminalButton(leftPos+264,topPos+20,78,12,tr("ignore_components.off"),
-            b->send("ignore_components",0,Boolean.toString(!menu.view.getBoolean("ignoreTargetComponents")))));
-        substitutions=addRenderableWidget(new ToggleButton(Icon.S_SUBSTITUTION_ENABLED,Icon.S_SUBSTITUTION_DISABLED,
-            enabled->send("substitute",0,Boolean.toString(enabled))));
-        substitutions.setPosition(leftPos+350,topPos+22);
-        substitutions.setHalfSize(true);substitutions.setDisableBackground(true);substitutions.setWidth(8);substitutions.setHeight(8);
-        substitutions.setTooltipOn(List.of(ButtonToolTips.SubstitutionsOn.text(),ButtonToolTips.SubstitutionsDescEnabled.text()));
-        substitutions.setTooltipOff(List.of(ButtonToolTips.SubstitutionsOff.text(),ButtonToolTips.SubstitutionsDescDisabled.text()));
-        fluidSubstitutions=addRenderableWidget(new ToggleButton(Icon.S_FLUID_SUBSTITUTION_ENABLED,Icon.S_FLUID_SUBSTITUTION_DISABLED,
-            enabled->send("substituteFluids",0,Boolean.toString(enabled))));
-        fluidSubstitutions.setPosition(leftPos+366,topPos+22);
-        fluidSubstitutions.setHalfSize(true);fluidSubstitutions.setDisableBackground(true);fluidSubstitutions.setWidth(8);fluidSubstitutions.setHeight(8);
-        fluidSubstitutions.setTooltipOn(List.of(ButtonToolTips.FluidSubstitutions.text(),ButtonToolTips.FluidSubstitutionsDescEnabled.text()));
-        fluidSubstitutions.setTooltipOff(List.of(ButtonToolTips.FluidSubstitutions.text(),ButtonToolTips.FluidSubstitutionsDescDisabled.text()));
-        button(208,34,80,"cursor",()->send("cursor",0,""));
-        processing=button(292,34,84,"processing.off",()->send("processing",0,""));
-        autoUpload=button(208,52,82,"upload.off",()->send("autoUpload",0,Boolean.toString(!menu.view.getBoolean("autoUpload"))));
-        uploadTarget=button(294,52,82,"upload.target",()->{
-            search.setFocused(false);draggingRows=false;
-            providers=new ProviderSelectionView(menu,this::send,this::closeProviders,width,height);
-            send("uploadTarget",0,"");
-        });
-        recipe=button(208,70,82,"recipe",()->send("recipe",0,""));
-        external=button(294,70,82,"external",()->send("external",0,""));
-        variant=button(208,88,168,"variant",ingredients::request);
-        button(8,118,89,"analyze",()->{search.setValue("");send("analyze",0,"");});
-        start=button(101,118,89,"start",()->send("start",0,""));
-        pause=button(194,118,89,"pause",()->send("pause",0,""));
-        button(287,118,89,"cancel",()->send("cancel",0,""));
-    }
-    @Override protected void containerTick() {
-        super.containerTick();var state=menu.view.getString("state");
-        int revision=menu.view.getInt("revision");
-        if(pendingSelectionRevision!=revision){pendingSelection.clear();pendingSelectionRevision=revision;}
-        pendingTab.setMessage(showPendingInline?tr("dependencies"):
-            Component.translatable("gui.aeautopatterns.pending.count",menu.view.getInt("pendingCount")));
-        var pendingIds=menu.view.getIntArray("pendingIds");
-        boolean allSelected=pendingIds.length>0&&Arrays.stream(pendingIds).allMatch(pendingSelection::contains);
-        pendingSelectAll.setMessage(tr(allSelected?"pending.clear":"pending.select_all"));
-        pendingSelectAll.active=pendingIds.length>0;
-        pendingMakeExternal.active=!pendingSelection.isEmpty();
-        treeButton.active=menu.view.getBoolean("treeReady");
-        ignoreComponents.setMessage(tr(menu.view.getBoolean("ignoreTargetComponents")?"ignore_components.on":"ignore_components.off"));
-        processing.setMessage(tr(menu.view.getBoolean("allowProcessing")?"processing.on":"processing.off"));
-        autoUpload.setMessage(tr(menu.view.getBoolean("autoUpload")?"upload.on":"upload.off"));
-        uploadTarget.setMessage(tr("upload.target"));
-        uploadTarget.active=true;
-        start.active=state.equals("READY")||state.equals("PAUSED");
-        pause.active=Set.of("RUNNING","NO_BLANKS","FULL","OFFLINE","VALIDATING").contains(state);
-        recipe.active=menu.view.getInt("recipes")>1;variant.active=menu.view.getBoolean("canEditIngredients");
-        external.active=menu.view.contains("selected");
-    }
-    private void text(GuiGraphics g,String value,int x,int y,int color,int width) {
-        g.drawString(font,font.plainSubstrByWidth(value,width),leftPos+x,topPos+y,color,false);
-    }
-    private void panel(GuiGraphics g,int x,int y,int w,int h,int fill,boolean inset) {
-        bevel(g,leftPos+x,topPos+y,w,h,fill,inset);
-    }
-    private String rowStatus(CompoundTag row) {
-        String kind=row.getString("kind");
-        if(kind.equals("PENDING")&&menu.view.getString("state").equals("ERROR")) {
-            String material=menu.view.getString("issueMaterial");
-            return material.isEmpty()?tr("kind.ISSUE").getString():Component.translatable("gui.aeautopatterns.issue.at",material).getString();
-        }
-        return tr("kind."+kind).getString();
-    }
-    private List<Component> issueTooltip() {
-        var lines=new ArrayList<Component>();
-        if(!menu.view.getString("issuePath").isEmpty()) {
-            lines.add(Component.translatable("gui.aeautopatterns.issue.path",menu.view.getString("issuePath")));
-            if(!menu.view.getString("issueRecipe").isEmpty())lines.add(Component.translatable("gui.aeautopatterns.issue.recipe",menu.view.getString("issueRecipe")));
-        }
-        String error=menu.view.getString("error");
-        lines.add(error.startsWith("Cycle:")?tr("issue.cycle"):Component.literal(error));
-        if(!menu.view.getString("issueMaterial").isEmpty())lines.add(tr("issue.locate"));
-        return lines;
-    }
-    private void renderIssueTooltip(GuiGraphics g,List<Component> lines,int mx,int my) {
-        var wrapped=new ArrayList<net.minecraft.util.FormattedCharSequence>();
-        for(var line:lines)wrapped.addAll(font.split(line,Math.max(80,Math.min(340,width-20))));
-        g.renderTooltip(font,wrapped,mx,my);
-    }
-    @Override protected void renderBg(GuiGraphics g,float partial,int mx,int my) {
-        g.fill(leftPos-1,topPos-1,leftPos+imageWidth+1,topPos+imageHeight+1,EDGE);
-        panel(g,0,0,imageWidth,imageHeight,PANEL,false);
-        panel(g,2,2,imageWidth-4,imageHeight-4,PANEL,false);
-        panel(g,196,4,182,17,LIGHT,true);
-        if(pendingWidth>0)text(g,tr("dependencies").getString(),8,22,TEXT,124);
-        text(g,tr("route").getString(),208,22,TEXT,52);
-        panel(g,6,32,194,76,SLOT,true);
-        panel(g,203,32,176,84,WELL,true);
-        if(pendingInline()) {
-            renderPendingRows(g,8,51,190,3,ROW_HEIGHT,mx,my);
-        } else if(!search.getValue().isBlank()) {
-            for(int i=0;i<Math.min(AutoPatternMenu.VISIBLE_ROWS,results.size()-searchOffset);i++) {
-                int y=ROW_TOP+i*ROW_HEIGHT;
-                panel(g,8,y,190,ROW_HEIGHT,SLOT,true);
-                var item=results.get(searchOffset+i);g.renderItem(item.getDefaultInstance(),leftPos+12,topPos+y+2);
-                text(g,item.getDescription().getString(),34,y+6,TEXT,158);
-            }
-        } else {
-            var rows=menu.view.getList("rows",Tag.TAG_COMPOUND);
-            for(int i=0;i<rows.size();i++) {
-                var row=rows.getCompound(i);int y=ROW_TOP+i*ROW_HEIGHT;
-                int indent=Math.min(4,row.getInt("depth"))*7;
-                boolean fluidHighlight=menu.view.getBoolean("substituteFluids")&&fluidSubstitutions.isHovered()
-                    &&Arrays.stream(menu.view.getIntArray("fluidMaterials")).anyMatch(id->id==row.getInt("id"));
-                panel(g,8,y,190,ROW_HEIGHT,fluidHighlight?0xff7ac25f:row.getBoolean("selected")?0xffc4ccdf:SLOT,true);
-                text(g,row.getBoolean("children")?(row.getBoolean("collapsed")?"+":"−"):"·",10+indent,y+6,MUTED,9);
-                var icon=ItemStack.parseOptional(minecraft.level.registryAccess(),row.getCompound("icon"));
-                if(!icon.isEmpty())g.renderItem(icon,leftPos+20+indent,topPos+y+2);
-                text(g,row.getString("name"),39+indent,y,TEXT,153-indent);
-                text(g,rowStatus(row),39+indent,y+9,kindColor(row.getString("kind")),153-indent);
-            }
-        }
-        int count=pendingInline()?0:search.getValue().isBlank()?menu.view.getInt("rowCount"):results.size();
-        int offset=draggingRows?rowDragOffset:search.getValue().isBlank()?menu.view.getInt("scrollOffset"):searchOffset;
-        if(count>AutoPatternMenu.VISIBLE_ROWS) {
-            int thumb=Math.max(8,72*AutoPatternMenu.VISIBLE_ROWS/count);
-            int y=ROW_TOP+(72-thumb)*offset/(count-AutoPatternMenu.VISIBLE_ROWS);
-            g.fill(leftPos+196,topPos+ROW_TOP,leftPos+199,topPos+ROW_BOTTOM,SHADOW);
-            g.fill(leftPos+196,topPos+y,leftPos+199,topPos+y+thumb,LIGHT);
-        }
-        if(menu.view.getBoolean("inputFluid")&&fluidSubstitutions.isHovered())
-            g.fill(leftPos+207,topPos+105,leftPos+377,topPos+114,0xff7ac25f);
-        if (menu.view.getInt("ingredients") > 0)
-            text(g, Component.translatable("gui.aeautopatterns.ingredient.count", menu.view.getInt("ingredients")).getString(),208,106,TEXT,168);
-        String state=menu.view.getString("state");
-        String progress=state.equals("ANALYZING")
-            ?tr("state."+state).getString()+" · "+tr("phase."+menu.view.getString("analysisPhase")).getString()+" · "+menu.view.getInt("analysisMaterials")
-            :state.equals("VALIDATING")?tr("state."+state).getString()+" · "+menu.view.getInt("analysisMaterials")
-            :state.equals("INDEXING")?tr("state."+state).getString()
-            :tr("state."+state).getString()+"  "+menu.view.getInt("done")+"/"+menu.view.getInt("total");
-        text(g,progress,8,140,TEXT,282);
-        int total=menu.view.getInt("total"), done=menu.view.getInt("done");
-        panel(g,298,141,78,7,SHADOW,true);
-        if(total>0)g.fill(leftPos+299,topPos+142,leftPos+299+Math.min(76,76*done/total),topPos+147,0xff79b8ac);
-        text(g,tr("outputs").getString(),8,152,TEXT,160);
-        text(g,tr("blanks").getString(),174,152,TEXT,42);
-        text(g,tr("inventory").getString(),216,152,TEXT,80);
-        for(var slot:menu.slots)panel(g,slot.x-1,slot.y-1,18,18,SLOT,true);
+   private static final int ROW_TOP = 34;
+   private static final int ROW_HEIGHT = 18;
+   private static final int ROW_BOTTOM = 106;
+   private EditBox search;
+   private List<Item> results = List.of();
+   private int searchOffset;
+   private boolean draggingRows;
+   private boolean draggingSearch;
+   private double rowDragGrab;
+   private int rowDragOffset;
+   private int rowDragRevision;
+   private Button start;
+   private Button pause;
+   private Button recipe;
+   private Button external;
+   private Button variant;
+   private Button treeButton;
+   private Button processing;
+   private Button autoUpload;
+   private Button uploadTarget;
+   private DependencyTreeView tree;
+   private ProviderSelectionView providers;
+   private final RecipeSelectionView picker;
+   private final IngredientSelectionView ingredients;
+   private ToggleButton substitutions;
+   private ToggleButton fluidSubstitutions;
+   private int pendingWidth;
+   private boolean showPendingInline;
+   private Button pendingTab;
+   private Button ignoreComponents;
+   private Button pendingSelectAll;
+   private Button pendingMakeExternal;
+   private final Set<Integer> pendingSelection = new HashSet<>();
+   private int pendingSelectionRevision = -1;
 
-        text(g,tr("required").getString(),174,203,MUTED,42);
-        text(g,Integer.toString(menu.view.getInt("GENERATE")),184,215,TEXT,30);
-        text(g,tr("summary").getString()+" "+menu.view.getInt("GENERATE")+" / "+menu.view.getInt("NETWORK")+" / "+menu.view.getInt("BUFFER")+" / "+menu.view.getInt("EXTERNAL")+" / "+menu.view.getInt("UNSUPPORTED"),8,240,TEXT,370);
-        text(g,tr("stock").getString()+" "+menu.view.getLong("stored")+"  "+tr("kind.NEEDS_RECIPE").getString()+": "+menu.view.getInt("NEEDS_RECIPE"),8,250,MUTED,370);
-        String error=menu.view.getString("error");
-        if(!error.isEmpty())text(g,menu.view.getString("issueMaterial").isEmpty()?error:
-            Component.translatable("gui.aeautopatterns.issue.at",menu.view.getString("issueMaterial")).getString()+" · "+tr("issue.locate").getString(),8,260,0xff8d303a,370);
-        if(pendingWidth>0) {
-            int x=-pendingWidth-6;
-            panel(g,x,20,pendingWidth,218,PANEL,false);
-            text(g,tr("pending.title").getString(),x+6,27,TEXT,pendingWidth-12);
-            text(g,Component.translatable("gui.aeautopatterns.pending.count",menu.view.getInt("pendingCount")).getString(),x+6,39,MUTED,pendingWidth-12);
-            renderPendingRows(g,x+4,66,pendingWidth-8,AutoPatternMenu.PENDING_VISIBLE_ROWS,21,mx,my);
-        }
-    }
-    private boolean pendingInline() {return pendingWidth==0&&showPendingInline&&search.getValue().isBlank();}
-    private void renderPendingRows(GuiGraphics g,int x,int y,int w,int visible,int rowHeight,int mx,int my) {
-        var rows=menu.view.getList("pendingRows",Tag.TAG_COMPOUND);
-        panel(g,x,y,w,visible*rowHeight,SLOT,true);
-        for(int i=0;i<Math.min(visible,rows.size());i++) {
-            var row=rows.getCompound(i);int ry=y+i*rowHeight;
-            boolean hovered=mx>=leftPos+x&&mx<leftPos+x+w-4&&my>=topPos+ry&&my<topPos+ry+rowHeight;
-            int fill=row.getBoolean("selected")?0xffc4ccdf:hovered?0xffc3c7d8:SLOT;
-            if(row.getBoolean("unresolved")&&!row.getBoolean("selected"))fill=hovered?0xffdfb9b2:0xffd4aaa4;
-            panel(g,x,ry,w-4,rowHeight,fill,true);
-            int id=row.getInt("id");boolean checked=pendingSelection.contains(id);
-            int boxY=ry+(rowHeight-10)/2;
-            panel(g,x+1,boxY,10,10,checked?0xff8aa49a:WELL,true);
-            if(checked) {
-                g.fill(leftPos+x+3,topPos+boxY+4,leftPos+x+5,topPos+boxY+7,TEXT);
-                g.fill(leftPos+x+5,topPos+boxY+2,leftPos+x+9,topPos+boxY+5,TEXT);
+   void acceptJeiItem(ItemStack stack) {
+      if (stack != null && !stack.isEmpty()) {
+         CompoundTag encoded = (CompoundTag)stack.save(Minecraft.getInstance().level.registryAccess());
+         PacketDistributor.sendToServer(
+            new TerminalPackets.JeiTarget(((AutoPatternMenu)this.menu).containerId, ((AutoPatternMenu)this.menu).view.getInt("revision"), encoded),
+            new CustomPacketPayload[0]
+         );
+      }
+   }
+
+   Rect2i jeiTargetArea() {
+      return new Rect2i(this.leftPos + 8, this.topPos + 34, 190, 72);
+   }
+
+   public AutoPatternScreen(AutoPatternMenu menu, Inventory inv, Component title) {
+      super(menu, inv, title);
+      this.imageWidth = 386;
+      this.imageHeight = 270;
+      this.inventoryLabelY = -100;
+      this.picker = new RecipeSelectionView(menu, this::send);
+      this.ingredients = new IngredientSelectionView(menu, this::send);
+   }
+
+   private Component tr(String key) {
+      return Component.translatable("gui.aeautopatterns." + key);
+   }
+
+   private void send(String action, int index, String value) {
+      PacketDistributor.sendToServer(
+         new TerminalPackets.Action(((AutoPatternMenu)this.menu).containerId, ((AutoPatternMenu)this.menu).view.getInt("revision"), action, index, value),
+         new CustomPacketPayload[0]
+      );
+   }
+
+   private Button button(int x, int y, int w, String label, Runnable click) {
+      return (Button)this.addRenderableWidget(new TerminalStyle.TerminalButton(this.leftPos + x, this.topPos + y, w, 16, this.tr(label), v -> click.run()));
+   }
+
+   protected void init() {
+      String query = this.search == null ? "" : this.search.getValue();
+      super.init();
+      this.draggingRows = false;
+      this.pendingWidth = this.width - this.imageWidth - 18 >= 72 ? Math.min(112, this.width - this.imageWidth - 18) : 0;
+      if (this.pendingWidth > 0) {
+         this.leftPos = (this.width - this.imageWidth - this.pendingWidth - 6) / 2 + this.pendingWidth + 6;
+      }
+
+      this.send("pending_scroll", 0, this.pendingWidth == 0 ? "compact" : "wide");
+      int controlsX = this.pendingWidth > 0 ? -this.pendingWidth - 2 : 8;
+      int controlsY = this.pendingWidth > 0 ? 49 : 34;
+      int controlsWidth = this.pendingWidth > 0 ? this.pendingWidth - 8 : 190;
+      int gap = 3;
+      int buttonWidth = (controlsWidth - gap) / 2;
+      this.pendingSelectAll = (Button)this.addRenderableWidget(
+         new TerminalStyle.TerminalButton(
+            this.leftPos + controlsX, this.topPos + controlsY, buttonWidth, 14, this.tr("pending.select_all"), b -> this.toggleAllPending()
+         )
+      );
+      this.pendingMakeExternal = (Button)this.addRenderableWidget(
+         new TerminalStyle.TerminalButton(
+            this.leftPos + controlsX + buttonWidth + gap,
+            this.topPos + controlsY,
+            controlsWidth - buttonWidth - gap,
+            14,
+            this.tr("pending.make_external"),
+            b -> this.sendBulkExternal()
+         )
+      );
+      PacketDistributor.sendToServer(
+         new TerminalPackets.Action(
+            ((AutoPatternMenu)this.menu).containerId,
+            ((AutoPatternMenu)this.menu).view.getInt("revision"),
+            "jei_status",
+            0,
+            Boolean.toString(JeiCompat.available())
+         ),
+         new CustomPacketPayload[0]
+      );
+      this.search = new EditBox(this.font, this.leftPos + 200, this.topPos + 8, 172, 12, this.tr("search"));
+      this.search.setBordered(false);
+      this.search.setTextColor(-13092531);
+      this.search.setTextColorUneditable(-11315602);
+      this.search.setHint(this.tr("search"));
+      this.search.setMaxLength(80);
+      this.search
+         .setResponder(
+            value -> {
+               this.draggingRows = false;
+               this.searchOffset = 0;
+               if (value.isBlank()) {
+                  this.results = List.of();
+               } else {
+                  String term = value.toLowerCase(Locale.ROOT);
+                  this.results = BuiltInRegistries.ITEM
+                     .stream()
+                     .filter(
+                        i -> i != Items.AIR
+                              && (
+                                 BuiltInRegistries.ITEM.getKey(i).toString().contains(term)
+                                    || i.getDescription().getString().toLowerCase(Locale.ROOT).contains(term)
+                              )
+                     )
+                     .toList();
+               }
             }
-            var icon=ItemStack.parseOptional(minecraft.level.registryAccess(),row.getCompound("icon"));
-            if(!icon.isEmpty())g.renderItem(icon,leftPos+x+14,topPos+ry+(rowHeight-16)/2);
-            if(rowHeight>=21) {
-                var lines=font.split(Component.literal(row.getString("name")),w-40);
-                for(int line=0;line<Math.min(1,lines.size());line++)
-                    g.drawString(font,lines.get(line),leftPos+x+32,topPos+ry+2+line*9,TEXT,false);
-                String status=row.getBoolean("unresolved")?tr("pending.unresolved").getString()
-                    :row.getBoolean("needsRecipe")?tr("pending.needs_recipe").getString():"";
-                if(!status.isEmpty())g.drawString(font,font.plainSubstrByWidth(status,w-40),leftPos+x+32,topPos+ry+12,
-                    row.getBoolean("unresolved")?0xff8d303a:0xffa26412,false);
-            } else text(g,row.getString("name"),x+32,ry+5,TEXT,w-40);
-        }
-        if(rows.isEmpty())text(g,tr("pending.empty").getString(),x+5,y+7,MUTED,w-10);
-        int count=menu.view.getInt("pendingCount"),offset=menu.view.getInt("pendingOffset");
-        if(count>visible) {
-            int height=visible*rowHeight,thumb=Math.max(8,height*visible/count);
-            int top=y+(height-thumb)*offset/(count-visible);
-            g.fill(leftPos+x+w-3,topPos+y,leftPos+x+w,topPos+y+height,SHADOW);
-            g.fill(leftPos+x+w-3,topPos+top,leftPos+x+w,topPos+top+thumb,LIGHT);
-        }
-    }
-    private int pendingRowAt(double mx,double my) {
-        int x=pendingWidth>0?-pendingWidth-2:8,y=pendingWidth>0?66:51;
-        int w=pendingWidth>0?pendingWidth-8:190,h=pendingWidth>0?21:ROW_HEIGHT;
-        int visible=pendingWidth>0?AutoPatternMenu.PENDING_VISIBLE_ROWS:3;
-        if(pendingWidth==0&&!pendingInline())return -1;
-        if(mx<leftPos+x||mx>=leftPos+x+w||my<topPos+y||my>=topPos+y+visible*h)return -1;
-        return ((int)my-topPos-y)/h;
-    }
-    private boolean pendingCheckboxAt(double mx,double my) {
-        int x=pendingWidth>0?-pendingWidth-1:9,y=pendingWidth>0?66:51;
-        int h=pendingWidth>0?21:ROW_HEIGHT,visible=pendingWidth>0?AutoPatternMenu.PENDING_VISIBLE_ROWS:3;
-        return (pendingWidth>0||pendingInline())&&mx>=leftPos+x&&mx<leftPos+x+12
-            &&my>=topPos+y&&my<topPos+y+visible*h;
-    }
-    private void toggleAllPending() {
-        int[] ids=menu.view.getIntArray("pendingIds");
-        boolean all=ids.length>0&&Arrays.stream(ids).allMatch(pendingSelection::contains);
-        if(all)for(int id:ids)pendingSelection.remove(id);else for(int id:ids)if(id>=0)pendingSelection.add(id);
-    }
-    private void sendBulkExternal() {
-        if(pendingSelection.isEmpty())return;
-        PacketDistributor.sendToServer(new TerminalPackets.BulkExternal(menu.containerId,menu.view.getInt("revision"),
-            pendingSelection.stream().sorted().toList()));
-        pendingSelection.clear();
-    }
-    private int kindColor(String kind) {
-        return switch(kind) {
-            case "NETWORK","BUFFER","GENERATED"->0xff245b47;
-            case "EXTERNAL"->0xff715222;
-            case "UNSUPPORTED"->0xff8d303a;
-            case "NEEDS_RECIPE"->0xffa26412;
-            case "PENDING"->menu.view.getString("state").equals("ERROR")?0xff8d303a:MUTED;
-            default->0xff354d7a;
-        };
-    }
-    @Override protected void renderLabels(GuiGraphics g,int mx,int my) {
-        g.drawString(font,title,8,10,TEXT,false);
-    }
-    @Override public void render(GuiGraphics g,int mx,int my,float partial) {
-        if (ingredients.open()) {
-            renderTerminal(g, -1, -1, partial);
-            ingredients.render(g, mx, my, partial, width, height);
-            return;
-        }
-        renderTerminal(g, mx, my, partial);
-    }
-    private void renderTerminal(GuiGraphics g,int mx,int my,float partial) {
-        if(providers!=null){providers.render(g,mx,my,partial);return;}
-        boolean showBulk=tree==null&&(pendingWidth>0||pendingInline());
-        pendingSelectAll.visible=showBulk;pendingMakeExternal.visible=showBulk;
-        if(tree!=null){tree.render(g,mx,my,partial);if(picker.open())picker.render(g,mx,my,partial,width,height);return;}
-        substitutions.setState(menu.view.getBoolean("substitute"));
-        fluidSubstitutions.setState(menu.view.getBoolean("substituteFluids"));
-        super.render(g,mx,my,partial);renderTooltip(g,mx,my);
-        int pendingRow=pendingRowAt(mx,my);
-        var pending=menu.view.getList("pendingRows",Tag.TAG_COMPOUND);
-        if(pendingRow>=0&&pendingRow<pending.size()) {
-            var row=pending.getCompound(pendingRow);
-            var details=new ArrayList<Component>();details.add(Component.literal(row.getString("name")));
-            details.add(row.getBoolean("unresolved")?tr("pending.unresolved_help"):tr("pending.help"));
-            if(row.getBoolean("unresolved")&&!row.getString("path").isEmpty())
-                details.add(Component.translatable("gui.aeautopatterns.issue.path",row.getString("path")));
-            if(row.getBoolean("unresolved")&&!row.getString("recipe").isEmpty())
-                details.add(Component.translatable("gui.aeautopatterns.issue.recipe",row.getString("recipe")));
-            g.renderTooltip(font,details,Optional.empty(),mx,my);
-        }
-        if(mx>=leftPos+8&&mx<leftPos+377&&my>=topPos+138&&my<topPos+150) {
-            var details=new ArrayList<Component>(List.of(Component.translatable("gui.aeautopatterns.analysis.graph",menu.view.getInt("analysisMaterials"),menu.view.getLong("analysisEdges"),menu.view.getInt("analysisComponents")),
-                Component.translatable("gui.aeautopatterns.analysis.work",menu.view.getLong("analysisAttempts"),menu.view.getLong("analysisCacheHits"),menu.view.getLong("analysisReused")),
-                Component.translatable("gui.aeautopatterns.analysis.time",menu.view.getInt("analysisMillis"),menu.view.getInt("analysisJeiPending"))));
-            String diagnostics=menu.view.getString("analysisAdapterDiagnostics");
-            if(!diagnostics.isEmpty())details.add(Component.literal(diagnostics));
-            g.renderTooltip(font,details,Optional.empty(),mx,my);
-        }
-        if(substitutions.isHovered())g.renderTooltip(font,substitutions.getTooltipMessage(),Optional.empty(),mx,my);
-        if(fluidSubstitutions.isHovered())g.renderTooltip(font,fluidSubstitutions.getTooltipMessage(),Optional.empty(),mx,my);
-        if(processing.isHovered())g.renderTooltip(font,List.of(tr("processing.help"),tr("processing.fuel")),Optional.empty(),mx,my);
-        if(ignoreComponents.isHovered())renderIssueTooltip(g,List.of(tr("ignore_components.help"),tr("ignore_components.trim")),mx,my);
-        if(autoUpload.isHovered())g.renderTooltip(font,List.of(tr("upload.help")),Optional.empty(),mx,my);
-        if(uploadTarget.isHovered())g.renderTooltip(font,List.of(
-            Component.translatable("gui.aeautopatterns.providers.summary",menu.view.getInt("selectedProviderCount"),menu.view.getInt("selectedOnlineProviders")),
-            Component.translatable("gui.aeautopatterns.providers.free_total",menu.view.getInt("uploadFreeSlots")),
-            Component.literal(menu.view.getString("uploadStatus"))),Optional.empty(),mx,my);
-        if(search.isHovered()&&JeiCompat.available())g.renderTooltip(font,tr("search.jei_drop"),mx,my);
-        if(mx>=leftPos+8&&mx<leftPos+378&&my>=topPos+259&&my<topPos+270&&!menu.view.getString("error").isEmpty())
-            renderIssueTooltip(g,issueTooltip(),mx,my);
-        if(!pendingInline()&&search.getValue().isBlank()&&mx>=leftPos+8&&mx<leftPos+198&&my>=topPos+ROW_TOP&&my<topPos+ROW_BOTTOM) {
-            int row=(my-topPos-ROW_TOP)/ROW_HEIGHT;var rows=menu.view.getList("rows",Tag.TAG_COMPOUND);
-            if(row<rows.size()) {
-                var r=rows.getCompound(row);
-                var details=new ArrayList<Component>();details.add(Component.literal(r.getString("name")+" — "+rowStatus(r)));
-                if(menu.view.getString("state").equals("ERROR"))details.addAll(issueTooltip());
-                renderIssueTooltip(g,details,mx,my);
+         );
+      this.addRenderableWidget(this.search);
+      this.search.setValue(query);
+      this.pendingTab = (Button)this.addRenderableWidget(
+         new TerminalStyle.TerminalButton(this.leftPos + 8, this.topPos + 20, 126, 12, this.tr("pending.title"), b -> {
+            this.showPendingInline = !this.showPendingInline;
+            if (this.showPendingInline) {
+               this.search.setValue("");
             }
-        }
-        if(recipe.isHovered()&&!menu.view.getString("recipe").isEmpty()) {
-            var details=new ArrayList<Component>();
-            details.add(Component.literal(menu.view.getString("recipe")));
-            if(!menu.view.getString("adapterId").isEmpty()) details.add(Component.literal("Adapter: "+menu.view.getString("adapterId")));
-            if(!menu.view.getString("machineType").isEmpty()) details.add(Component.literal("Machine: "+menu.view.getString("machineType")));
-            if(!menu.view.getString("conditions").isEmpty()) details.add(Component.literal(menu.view.getString("conditions")));
-            if(menu.view.getInt("probabilisticOutputs")>0) details.add(Component.literal("Probabilistic outputs: "+menu.view.getInt("probabilisticOutputs")));
-            g.renderTooltip(font,details.stream().map(Component::getVisualOrderText).toList(),mx,my);
-        }
-        if(picker.open())picker.render(g,mx,my,partial,width,height);
-    }
-    @Override public boolean mouseClicked(double mx,double my,int button) {
-        if(providers!=null)return providers.click(mx,my,button);
-        if(ingredients.open())return ingredients.click(mx,my,button);
-        if(picker.open())return picker.click(mx,my,button);
-        if(tree!=null)return tree.mouseClicked(mx,my,button);
-        int scrollCount=search.getValue().isBlank()?menu.view.getInt("rowCount"):results.size();
-        if(button==0&&!pendingInline()&&scrollCount>AutoPatternMenu.VISIBLE_ROWS
-            &&mx>=leftPos+194&&mx<leftPos+200&&my>=topPos+ROW_TOP&&my<topPos+ROW_BOTTOM) {
-            int thumb=Math.max(8,72*AutoPatternMenu.VISIBLE_ROWS/scrollCount);
-            int offset=search.getValue().isBlank()?menu.view.getInt("scrollOffset"):searchOffset;
-            int thumbY=topPos+ROW_TOP+(72-thumb)*offset/(scrollCount-AutoPatternMenu.VISIBLE_ROWS);
-            rowDragGrab=my>=thumbY&&my<thumbY+thumb?my-thumbY:thumb/2.0;
-            draggingRows=true;draggingSearch=!search.getValue().isBlank();
-            rowDragOffset=offset;rowDragRevision=menu.view.getInt("revision");
-            search.setFocused(false);dragRowsTo(my);return true;
-        }
-        if((pendingWidth>0||pendingInline())&&
-            (pendingSelectAll.mouseClicked(mx,my,button)||pendingMakeExternal.mouseClicked(mx,my,button)))return true;
-        int pendingRow=pendingRowAt(mx,my);
-        if(button==0&&pendingRow>=0) {
-            var rows=menu.view.getList("pendingRows",Tag.TAG_COMPOUND);
-            if(pendingRow<rows.size()) {
-                var row=rows.getCompound(pendingRow);
-                if(pendingCheckboxAt(mx,my)) {
-                    int id=row.getInt("id");if(!pendingSelection.remove(id))pendingSelection.add(id);
-                } else send(row.getBoolean("unresolved")?"locate_material":"select",row.getInt("id"),"");
+         })
+      );
+      this.pendingTab.visible = this.pendingWidth == 0;
+      this.treeButton = (Button)this.addRenderableWidget(
+         new TerminalStyle.TerminalButton(
+            this.leftPos + 138,
+            this.topPos + 20,
+            60,
+            12,
+            this.tr("tree.open"),
+            b -> {
+               if (((AutoPatternMenu)this.menu).view.getBoolean("treeReady")) {
+                  this.search.setFocused(false);
+                  ((AutoPatternMenu)this.menu).treeNodes.clear();
+                  ((AutoPatternMenu)this.menu).treeRevision = -1;
+                  ((AutoPatternMenu)this.menu).treeTotal = 0;
+                  ((AutoPatternMenu)this.menu).treeLimited = false;
+                  this.tree = new DependencyTreeView(
+                     (AutoPatternMenu)this.menu,
+                     (action, index) -> this.send(action, index, ""),
+                     this::closeTree,
+                     this.ingredients::request,
+                     this.width,
+                     this.height
+                  );
+                  this.send("tree_open", 0, "");
+               }
             }
+         )
+      );
+      if (this.tree != null) {
+         this.tree.resize(this.width, this.height);
+      }
+
+      if (this.providers != null) {
+         this.providers.resize(this.width, this.height);
+      }
+
+      this.ignoreComponents = (Button)this.addRenderableWidget(
+         new TerminalStyle.TerminalButton(
+            this.leftPos + 264,
+            this.topPos + 20,
+            78,
+            12,
+            this.tr("ignore_components.off"),
+            b -> this.send("ignore_components", 0, Boolean.toString(!((AutoPatternMenu)this.menu).view.getBoolean("ignoreTargetComponents")))
+         )
+      );
+      this.substitutions = (ToggleButton)this.addRenderableWidget(
+         new ToggleButton(Icon.S_SUBSTITUTION_ENABLED, Icon.S_SUBSTITUTION_DISABLED, enabled -> this.send("substitute", 0, Boolean.toString(enabled)))
+      );
+      this.substitutions.setPosition(this.leftPos + 350, this.topPos + 22);
+      this.substitutions.setHalfSize(true);
+      this.substitutions.setDisableBackground(true);
+      this.substitutions.setWidth(8);
+      this.substitutions.setHeight(8);
+      this.substitutions.setTooltipOn(List.of(ButtonToolTips.SubstitutionsOn.text(), ButtonToolTips.SubstitutionsDescEnabled.text()));
+      this.substitutions.setTooltipOff(List.of(ButtonToolTips.SubstitutionsOff.text(), ButtonToolTips.SubstitutionsDescDisabled.text()));
+      this.fluidSubstitutions = (ToggleButton)this.addRenderableWidget(
+         new ToggleButton(
+            Icon.S_FLUID_SUBSTITUTION_ENABLED, Icon.S_FLUID_SUBSTITUTION_DISABLED, enabled -> this.send("substituteFluids", 0, Boolean.toString(enabled))
+         )
+      );
+      this.fluidSubstitutions.setPosition(this.leftPos + 366, this.topPos + 22);
+      this.fluidSubstitutions.setHalfSize(true);
+      this.fluidSubstitutions.setDisableBackground(true);
+      this.fluidSubstitutions.setWidth(8);
+      this.fluidSubstitutions.setHeight(8);
+      this.fluidSubstitutions.setTooltipOn(List.of(ButtonToolTips.FluidSubstitutions.text(), ButtonToolTips.FluidSubstitutionsDescEnabled.text()));
+      this.fluidSubstitutions.setTooltipOff(List.of(ButtonToolTips.FluidSubstitutions.text(), ButtonToolTips.FluidSubstitutionsDescDisabled.text()));
+      this.button(208, 34, 80, "cursor", () -> this.send("cursor", 0, ""));
+      this.processing = this.button(292, 34, 84, "processing.off", () -> this.send("processing", 0, ""));
+      this.autoUpload = this.button(
+         208, 52, 82, "upload.off", () -> this.send("autoUpload", 0, Boolean.toString(!((AutoPatternMenu)this.menu).view.getBoolean("autoUpload")))
+      );
+      this.uploadTarget = this.button(294, 52, 82, "upload.target", () -> {
+         this.search.setFocused(false);
+         this.draggingRows = false;
+         this.providers = new ProviderSelectionView((AutoPatternMenu)this.menu, this::send, this::closeProviders, this.width, this.height);
+         this.send("uploadTarget", 0, "");
+      });
+      this.recipe = this.button(208, 70, 82, "recipe", () -> this.send("recipe", 0, ""));
+      this.external = this.button(294, 70, 82, "external", () -> this.send("external", 0, ""));
+      this.variant = this.button(208, 88, 168, "variant", this.ingredients::request);
+      this.button(8, 118, 89, "analyze", () -> {
+         this.search.setValue("");
+         this.send("analyze", 0, "");
+      });
+      this.start = this.button(101, 118, 89, "start", () -> this.send("start", 0, ""));
+      this.pause = this.button(194, 118, 89, "pause", () -> this.send("pause", 0, ""));
+      this.button(287, 118, 89, "cancel", () -> this.send("cancel", 0, ""));
+   }
+
+   protected void containerTick() {
+      super.containerTick();
+      String state = ((AutoPatternMenu)this.menu).view.getString("state");
+      int revision = ((AutoPatternMenu)this.menu).view.getInt("revision");
+      if (this.pendingSelectionRevision != revision) {
+         this.pendingSelection.clear();
+         this.pendingSelectionRevision = revision;
+      }
+
+      this.pendingTab
+         .setMessage(
+            (Component)(this.showPendingInline
+               ? this.tr("dependencies")
+               : Component.translatable("gui.aeautopatterns.pending.count", new Object[]{((AutoPatternMenu)this.menu).view.getInt("pendingCount")}))
+         );
+      int[] pendingIds = ((AutoPatternMenu)this.menu).view.getIntArray("pendingIds");
+      boolean allSelected = pendingIds.length > 0 && Arrays.stream(pendingIds).allMatch(this.pendingSelection::contains);
+      this.pendingSelectAll.setMessage(this.tr(allSelected ? "pending.clear" : "pending.select_all"));
+      this.pendingSelectAll.active = pendingIds.length > 0;
+      this.pendingMakeExternal.active = !this.pendingSelection.isEmpty();
+      this.treeButton.active = ((AutoPatternMenu)this.menu).view.getBoolean("treeReady");
+      this.ignoreComponents
+         .setMessage(this.tr(((AutoPatternMenu)this.menu).view.getBoolean("ignoreTargetComponents") ? "ignore_components.on" : "ignore_components.off"));
+      this.processing.setMessage(this.tr(((AutoPatternMenu)this.menu).view.getBoolean("allowProcessing") ? "processing.on" : "processing.off"));
+      this.autoUpload.setMessage(this.tr(((AutoPatternMenu)this.menu).view.getBoolean("autoUpload") ? "upload.on" : "upload.off"));
+      this.uploadTarget.setMessage(this.tr("upload.target"));
+      this.uploadTarget.active = true;
+      this.start.active = state.equals("READY") || state.equals("PAUSED");
+      this.pause.active = Set.of("RUNNING", "NO_BLANKS", "FULL", "OFFLINE", "VALIDATING").contains(state);
+      this.recipe.active = ((AutoPatternMenu)this.menu).view.getInt("recipes") > 1;
+      this.variant.active = ((AutoPatternMenu)this.menu).view.getBoolean("canEditIngredients");
+      this.external.active = ((AutoPatternMenu)this.menu).view.contains("selected");
+   }
+
+   private void text(GuiGraphics g, String value, int x, int y, int color, int width) {
+      g.drawString(this.font, this.font.plainSubstrByWidth(value, width), this.leftPos + x, this.topPos + y, color, false);
+   }
+
+   private void panel(GuiGraphics g, int x, int y, int w, int h, int fill, boolean inset) {
+      TerminalStyle.bevel(g, this.leftPos + x, this.topPos + y, w, h, fill, inset);
+   }
+
+   private String rowStatus(CompoundTag row) {
+      String kind = row.getString("kind");
+      if (kind.equals("PENDING") && ((AutoPatternMenu)this.menu).view.getString("state").equals("ERROR")) {
+         String material = ((AutoPatternMenu)this.menu).view.getString("issueMaterial");
+         return material.isEmpty()
+            ? this.tr("kind.ISSUE").getString()
+            : Component.translatable("gui.aeautopatterns.issue.at", new Object[]{material}).getString();
+      } else {
+         return this.tr("kind." + kind).getString();
+      }
+   }
+
+   private List<Component> issueTooltip() {
+      ArrayList<Component> lines = new ArrayList<>();
+      if (!((AutoPatternMenu)this.menu).view.getString("issuePath").isEmpty()) {
+         lines.add(Component.translatable("gui.aeautopatterns.issue.path", new Object[]{((AutoPatternMenu)this.menu).view.getString("issuePath")}));
+         if (!((AutoPatternMenu)this.menu).view.getString("issueRecipe").isEmpty()) {
+            lines.add(Component.translatable("gui.aeautopatterns.issue.recipe", new Object[]{((AutoPatternMenu)this.menu).view.getString("issueRecipe")}));
+         }
+      }
+
+      String error = ((AutoPatternMenu)this.menu).view.getString("error");
+      lines.add((Component)(error.startsWith("Cycle:") ? this.tr("issue.cycle") : Component.literal(error)));
+      if (!((AutoPatternMenu)this.menu).view.getString("issueMaterial").isEmpty()) {
+         lines.add(this.tr("issue.locate"));
+      }
+
+      return lines;
+   }
+
+   private void renderIssueTooltip(GuiGraphics g, List<Component> lines, int mx, int my) {
+      ArrayList<FormattedCharSequence> wrapped = new ArrayList<>();
+
+      for (Component line : lines) {
+         wrapped.addAll(this.font.split(line, Math.max(80, Math.min(340, this.width - 20))));
+      }
+
+      g.renderTooltip(this.font, wrapped, mx, my);
+   }
+
+   protected void renderBg(GuiGraphics g, float partial, int mx, int my) {
+      g.fill(this.leftPos - 1, this.topPos - 1, this.leftPos + this.imageWidth + 1, this.topPos + this.imageHeight + 1, -12237221);
+      this.panel(g, 0, 0, this.imageWidth, this.imageHeight, -3355434, false);
+      this.panel(g, 2, 2, this.imageWidth - 4, this.imageHeight - 4, -3355434, false);
+      this.panel(g, 196, 4, 182, 17, -789505, true);
+      if (this.pendingWidth > 0) {
+         this.text(g, this.tr("dependencies").getString(), 8, 22, -13092531, 124);
+      }
+
+      this.text(g, this.tr("route").getString(), 208, 22, -13092531, 52);
+      this.panel(g, 6, 32, 194, 76, -5328185, true);
+      this.panel(g, 203, 32, 176, 84, -6709837, true);
+      if (this.pendingInline()) {
+         this.renderPendingRows(g, 8, 51, 190, 3, 18, mx, my);
+      } else if (!this.search.getValue().isBlank()) {
+         for (int i = 0; i < Math.min(4, this.results.size() - this.searchOffset); i++) {
+            int y = 34 + i * 18;
+            this.panel(g, 8, y, 190, 18, -5328185, true);
+            Item item = this.results.get(this.searchOffset + i);
+            g.renderItem(item.getDefaultInstance(), this.leftPos + 12, this.topPos + y + 2);
+            this.text(g, item.getDescription().getString(), 34, y + 6, -13092531, 158);
+         }
+      } else {
+         ListTag rows = ((AutoPatternMenu)this.menu).view.getList("rows", 10);
+
+         for (int i = 0; i < rows.size(); i++) {
+            CompoundTag row = rows.getCompound(i);
+            int y = 34 + i * 18;
+            int indent = Math.min(4, row.getInt("depth")) * 7;
+            boolean fluidHighlight = ((AutoPatternMenu)this.menu).view.getBoolean("substituteFluids")
+               && this.fluidSubstitutions.isHovered()
+               && Arrays.stream(((AutoPatternMenu)this.menu).view.getIntArray("fluidMaterials")).anyMatch(id -> id == row.getInt("id"));
+            this.panel(g, 8, y, 190, 18, fluidHighlight ? -8732065 : (row.getBoolean("selected") ? -3879713 : -5328185), true);
+            this.text(g, row.getBoolean("children") ? (row.getBoolean("collapsed") ? "+" : "−") : "·", 10 + indent, y + 6, -11315602, 9);
+            ItemStack icon = ItemStack.parseOptional(this.minecraft.level.registryAccess(), row.getCompound("icon"));
+            if (!icon.isEmpty()) {
+               g.renderItem(icon, this.leftPos + 20 + indent, this.topPos + y + 2);
+            }
+
+            this.text(g, row.getString("name"), 39 + indent, y, -13092531, 153 - indent);
+            this.text(g, this.rowStatus(row), 39 + indent, y + 9, this.kindColor(row.getString("kind")), 153 - indent);
+         }
+      }
+
+      int count = this.pendingInline() ? 0 : (this.search.getValue().isBlank() ? ((AutoPatternMenu)this.menu).view.getInt("rowCount") : this.results.size());
+      int offset = this.draggingRows
+         ? this.rowDragOffset
+         : (this.search.getValue().isBlank() ? ((AutoPatternMenu)this.menu).view.getInt("scrollOffset") : this.searchOffset);
+      if (count > 4) {
+         int thumb = Math.max(8, 288 / count);
+         int y = 34 + (72 - thumb) * offset / (count - 4);
+         g.fill(this.leftPos + 196, this.topPos + 34, this.leftPos + 199, this.topPos + 106, -9407348);
+         g.fill(this.leftPos + 196, this.topPos + y, this.leftPos + 199, this.topPos + y + thumb, -789505);
+      }
+
+      if (((AutoPatternMenu)this.menu).view.getBoolean("inputFluid") && this.fluidSubstitutions.isHovered()) {
+         g.fill(this.leftPos + 207, this.topPos + 105, this.leftPos + 377, this.topPos + 114, -8732065);
+      }
+
+      if (((AutoPatternMenu)this.menu).view.getInt("ingredients") > 0) {
+         this.text(
+            g,
+            Component.translatable("gui.aeautopatterns.ingredient.count", new Object[]{((AutoPatternMenu)this.menu).view.getInt("ingredients")}).getString(),
+            208,
+            106,
+            -13092531,
+            168
+         );
+      }
+
+      String state = ((AutoPatternMenu)this.menu).view.getString("state");
+      String progress = state.equals("ANALYZING")
+         ? this.tr("state." + state).getString()
+            + " · "
+            + this.tr("phase." + ((AutoPatternMenu)this.menu).view.getString("analysisPhase")).getString()
+            + " · "
+            + ((AutoPatternMenu)this.menu).view.getInt("analysisMaterials")
+         : (
+            state.equals("VALIDATING")
+               ? this.tr("state." + state).getString() + " · " + ((AutoPatternMenu)this.menu).view.getInt("analysisMaterials")
+               : (
+                  state.equals("INDEXING")
+                     ? this.tr("state." + state).getString()
+                     : this.tr("state." + state).getString()
+                        + "  "
+                        + ((AutoPatternMenu)this.menu).view.getInt("done")
+                        + "/"
+                        + ((AutoPatternMenu)this.menu).view.getInt("total")
+               )
+         );
+      this.text(g, progress, 8, 140, -13092531, 282);
+      int total = ((AutoPatternMenu)this.menu).view.getInt("total");
+      int done = ((AutoPatternMenu)this.menu).view.getInt("done");
+      this.panel(g, 298, 141, 78, 7, -9407348, true);
+      if (total > 0) {
+         g.fill(this.leftPos + 299, this.topPos + 142, this.leftPos + 299 + Math.min(76, 76 * done / total), this.topPos + 147, -8800084);
+      }
+
+      this.text(g, this.tr("outputs").getString(), 8, 152, -13092531, 160);
+      this.text(g, this.tr("blanks").getString(), 174, 152, -13092531, 42);
+      this.text(g, this.tr("inventory").getString(), 216, 152, -13092531, 80);
+
+      for (Slot slot : ((AutoPatternMenu)this.menu).slots) {
+         if (slot.isActive()) this.panel(g, slot.x - 1, slot.y - 1, 18, 18, -5328185, true);
+      }
+      int outputRows = AutoPatternTerminalPart.OUTPUT_PATTERN_SLOTS / 9;
+      int thumbHeight = Math.max(8, 54 * AutoPatternMenu.OUTPUT_VISIBLE_ROWS / outputRows);
+      int thumbY = 162 + (54 - thumbHeight) * ((AutoPatternMenu)this.menu).outputScrollOffset()
+            / (outputRows - AutoPatternMenu.OUTPUT_VISIBLE_ROWS);
+      g.fill(this.leftPos + 173, this.topPos + 162, this.leftPos + 176, this.topPos + 216, -9407348);
+      g.fill(this.leftPos + 173, this.topPos + thumbY, this.leftPos + 176, this.topPos + thumbY + thumbHeight, -789505);
+
+      this.text(g, this.tr("required").getString(), 174, 203, -11315602, 42);
+      this.text(g, Integer.toString(((AutoPatternMenu)this.menu).view.getInt("GENERATE")), 184, 215, -13092531, 30);
+      this.text(
+         g,
+         this.tr("summary").getString()
+            + " "
+            + ((AutoPatternMenu)this.menu).view.getInt("GENERATE")
+            + " / "
+            + ((AutoPatternMenu)this.menu).view.getInt("NETWORK")
+            + " / "
+            + ((AutoPatternMenu)this.menu).view.getInt("BUFFER")
+            + " / "
+            + ((AutoPatternMenu)this.menu).view.getInt("EXTERNAL")
+            + " / "
+            + ((AutoPatternMenu)this.menu).view.getInt("UNSUPPORTED"),
+         8,
+         240,
+         -13092531,
+         370
+      );
+      this.text(
+         g,
+         this.tr("stock").getString()
+            + " "
+            + ((AutoPatternMenu)this.menu).view.getLong("stored")
+            + "  "
+            + this.tr("kind.NEEDS_RECIPE").getString()
+            + ": "
+            + ((AutoPatternMenu)this.menu).view.getInt("NEEDS_RECIPE"),
+         8,
+         250,
+         -11315602,
+         370
+      );
+      String error = ((AutoPatternMenu)this.menu).view.getString("error");
+      if (!error.isEmpty()) {
+         this.text(
+            g,
+            ((AutoPatternMenu)this.menu).view.getString("issueMaterial").isEmpty()
+               ? error
+               : Component.translatable("gui.aeautopatterns.issue.at", new Object[]{((AutoPatternMenu)this.menu).view.getString("issueMaterial")}).getString()
+                  + " · "
+                  + this.tr("issue.locate").getString(),
+            8,
+            260,
+            -7524294,
+            370
+         );
+      }
+
+      if (this.pendingWidth > 0) {
+         int x = -this.pendingWidth - 6;
+         this.panel(g, x, 20, this.pendingWidth, 218, -3355434, false);
+         this.text(g, this.tr("pending.title").getString(), x + 6, 27, -13092531, this.pendingWidth - 12);
+         this.text(
+            g,
+            Component.translatable("gui.aeautopatterns.pending.count", new Object[]{((AutoPatternMenu)this.menu).view.getInt("pendingCount")}).getString(),
+            x + 6,
+            39,
+            -11315602,
+            this.pendingWidth - 12
+         );
+         this.renderPendingRows(g, x + 4, 66, this.pendingWidth - 8, 8, 21, mx, my);
+      }
+   }
+
+   private boolean pendingInline() {
+      return this.pendingWidth == 0 && this.showPendingInline && this.search.getValue().isBlank();
+   }
+
+   private void renderPendingRows(GuiGraphics g, int x, int y, int w, int visible, int rowHeight, int mx, int my) {
+      ListTag rows = ((AutoPatternMenu)this.menu).view.getList("pendingRows", 10);
+      this.panel(g, x, y, w, visible * rowHeight, -5328185, true);
+
+      for (int i = 0; i < Math.min(visible, rows.size()); i++) {
+         CompoundTag row = rows.getCompound(i);
+         int ry = y + i * rowHeight;
+         boolean hovered = mx >= this.leftPos + x && mx < this.leftPos + x + w - 4 && my >= this.topPos + ry && my < this.topPos + ry + rowHeight;
+         int fill = row.getBoolean("selected") ? -3879713 : (hovered ? -3946536 : -5328185);
+         if (row.getBoolean("unresolved") && !row.getBoolean("selected")) {
+            fill = hovered ? -2115150 : -2839900;
+         }
+
+         this.panel(g, x, ry, w - 4, rowHeight, fill, true);
+         int id = row.getInt("id");
+         boolean checked = this.pendingSelection.contains(id);
+         int boxY = ry + (rowHeight - 10) / 2;
+         this.panel(g, x + 1, boxY, 10, 10, checked ? -7691110 : -6709837, true);
+         if (checked) {
+            g.fill(this.leftPos + x + 3, this.topPos + boxY + 4, this.leftPos + x + 5, this.topPos + boxY + 7, -13092531);
+            g.fill(this.leftPos + x + 5, this.topPos + boxY + 2, this.leftPos + x + 9, this.topPos + boxY + 5, -13092531);
+         }
+
+         ItemStack icon = ItemStack.parseOptional(this.minecraft.level.registryAccess(), row.getCompound("icon"));
+         if (!icon.isEmpty()) {
+            g.renderItem(icon, this.leftPos + x + 14, this.topPos + ry + (rowHeight - 16) / 2);
+         }
+
+         if (rowHeight < 21) {
+            this.text(g, row.getString("name"), x + 32, ry + 5, -13092531, w - 40);
+         } else {
+            List<FormattedCharSequence> lines = this.font.split(Component.literal(row.getString("name")), w - 40);
+
+            for (int line = 0; line < Math.min(1, lines.size()); line++) {
+               g.drawString(this.font, lines.get(line), this.leftPos + x + 32, this.topPos + ry + 2 + line * 9, -13092531, false);
+            }
+
+            String status = row.getBoolean("unresolved")
+               ? this.tr("pending.unresolved").getString()
+               : (row.getBoolean("needsRecipe") ? this.tr("pending.needs_recipe").getString() : "");
+            if (!status.isEmpty()) {
+               g.drawString(
+                  this.font,
+                  this.font.plainSubstrByWidth(status, w - 40),
+                  this.leftPos + x + 32,
+                  this.topPos + ry + 12,
+                  row.getBoolean("unresolved") ? -7524294 : -6134766,
+                  false
+               );
+            }
+         }
+      }
+
+      if (rows.isEmpty()) {
+         this.text(g, this.tr("pending.empty").getString(), x + 5, y + 7, -11315602, w - 10);
+      }
+
+      int count = ((AutoPatternMenu)this.menu).view.getInt("pendingCount");
+      int offset = ((AutoPatternMenu)this.menu).view.getInt("pendingOffset");
+      if (count > visible) {
+         int height = visible * rowHeight;
+         int thumb = Math.max(8, height * visible / count);
+         int top = y + (height - thumb) * offset / (count - visible);
+         g.fill(this.leftPos + x + w - 3, this.topPos + y, this.leftPos + x + w, this.topPos + y + height, -9407348);
+         g.fill(this.leftPos + x + w - 3, this.topPos + top, this.leftPos + x + w, this.topPos + top + thumb, -789505);
+      }
+   }
+
+   private int pendingRowAt(double mx, double my) {
+      int x = this.pendingWidth > 0 ? -this.pendingWidth - 2 : 8;
+      int y = this.pendingWidth > 0 ? 66 : 51;
+      int w = this.pendingWidth > 0 ? this.pendingWidth - 8 : 190;
+      int h = this.pendingWidth > 0 ? 21 : 18;
+      int visible = this.pendingWidth > 0 ? 8 : 3;
+      if (this.pendingWidth == 0 && !this.pendingInline()) {
+         return -1;
+      } else {
+         return !(mx < (double)(this.leftPos + x))
+               && !(mx >= (double)(this.leftPos + x + w))
+               && !(my < (double)(this.topPos + y))
+               && !(my >= (double)(this.topPos + y + visible * h))
+            ? ((int)my - this.topPos - y) / h
+            : -1;
+      }
+   }
+
+   private boolean pendingCheckboxAt(double mx, double my) {
+      int x = this.pendingWidth > 0 ? -this.pendingWidth - 1 : 9;
+      int y = this.pendingWidth > 0 ? 66 : 51;
+      int h = this.pendingWidth > 0 ? 21 : 18;
+      int visible = this.pendingWidth > 0 ? 8 : 3;
+      return (this.pendingWidth > 0 || this.pendingInline())
+         && mx >= (double)(this.leftPos + x)
+         && mx < (double)(this.leftPos + x + 12)
+         && my >= (double)(this.topPos + y)
+         && my < (double)(this.topPos + y + visible * h);
+   }
+
+   private void toggleAllPending() {
+      int[] ids = ((AutoPatternMenu)this.menu).view.getIntArray("pendingIds");
+      boolean all = ids.length > 0 && Arrays.stream(ids).allMatch(this.pendingSelection::contains);
+      if (all) {
+         for (int id : ids) {
+            this.pendingSelection.remove(id);
+         }
+      } else {
+         for (int id : ids) {
+            if (id >= 0) {
+               this.pendingSelection.add(id);
+            }
+         }
+      }
+   }
+
+   private void sendBulkExternal() {
+      if (!this.pendingSelection.isEmpty()) {
+         PacketDistributor.sendToServer(
+            new TerminalPackets.BulkExternal(
+               ((AutoPatternMenu)this.menu).containerId, ((AutoPatternMenu)this.menu).view.getInt("revision"), this.pendingSelection.stream().sorted().toList()
+            ),
+            new CustomPacketPayload[0]
+         );
+         this.pendingSelection.clear();
+      }
+   }
+
+   private int kindColor(String kind) {
+      return switch (kind) {
+         case "NETWORK", "BUFFER", "GENERATED" -> -14394553;
+         case "EXTERNAL" -> -9350622;
+         case "UNSUPPORTED" -> -7524294;
+         case "NEEDS_RECIPE" -> -6134766;
+         case "PENDING" -> ((AutoPatternMenu)this.menu).view.getString("state").equals("ERROR") ? -7524294 : -11315602;
+         default -> -13283974;
+      };
+   }
+
+   protected void renderLabels(GuiGraphics g, int mx, int my) {
+      g.drawString(this.font, this.title, 8, 10, -13092531, false);
+   }
+
+   public void render(GuiGraphics g, int mx, int my, float partial) {
+      if (this.ingredients.open()) {
+         this.renderTerminal(g, -1, -1, partial);
+         this.ingredients.render(g, mx, my, partial, this.width, this.height);
+      } else {
+         this.renderTerminal(g, mx, my, partial);
+      }
+   }
+
+   private void renderTerminal(GuiGraphics g, int mx, int my, float partial) {
+      if (this.providers != null) {
+         this.providers.render(g, mx, my, partial);
+      } else {
+         boolean showBulk = this.tree == null && (this.pendingWidth > 0 || this.pendingInline());
+         this.pendingSelectAll.visible = showBulk;
+         this.pendingMakeExternal.visible = showBulk;
+         if (this.tree != null) {
+            this.tree.render(g, mx, my, partial);
+            if (this.picker.open()) {
+               this.picker.render(g, mx, my, partial, this.width, this.height);
+            }
+         } else {
+            this.substitutions.setState(((AutoPatternMenu)this.menu).view.getBoolean("substitute"));
+            this.fluidSubstitutions.setState(((AutoPatternMenu)this.menu).view.getBoolean("substituteFluids"));
+            super.render(g, mx, my, partial);
+            this.renderTooltip(g, mx, my);
+            int pendingRow = this.pendingRowAt((double)mx, (double)my);
+            ListTag pending = ((AutoPatternMenu)this.menu).view.getList("pendingRows", 10);
+            if (pendingRow >= 0 && pendingRow < pending.size()) {
+               CompoundTag row = pending.getCompound(pendingRow);
+               ArrayList<Component> details = new ArrayList<>();
+               details.add(Component.literal(row.getString("name")));
+               details.add(row.getBoolean("unresolved") ? this.tr("pending.unresolved_help") : this.tr("pending.help"));
+               if (row.getBoolean("unresolved") && !row.getString("path").isEmpty()) {
+                  details.add(Component.translatable("gui.aeautopatterns.issue.path", new Object[]{row.getString("path")}));
+               }
+
+               if (row.getBoolean("unresolved") && !row.getString("recipe").isEmpty()) {
+                  details.add(Component.translatable("gui.aeautopatterns.issue.recipe", new Object[]{row.getString("recipe")}));
+               }
+
+               g.renderTooltip(this.font, details, Optional.empty(), mx, my);
+            }
+
+            if (mx >= this.leftPos + 8 && mx < this.leftPos + 377 && my >= this.topPos + 138 && my < this.topPos + 150) {
+               ArrayList<Component> detailsx = new ArrayList<>(
+                  List.of(
+                     Component.translatable(
+                        "gui.aeautopatterns.analysis.graph",
+                        new Object[]{
+                           ((AutoPatternMenu)this.menu).view.getInt("analysisMaterials"),
+                           ((AutoPatternMenu)this.menu).view.getLong("analysisEdges"),
+                           ((AutoPatternMenu)this.menu).view.getInt("analysisComponents")
+                        }
+                     ),
+                     Component.translatable(
+                        "gui.aeautopatterns.analysis.work",
+                        new Object[]{
+                           ((AutoPatternMenu)this.menu).view.getLong("analysisAttempts"),
+                           ((AutoPatternMenu)this.menu).view.getLong("analysisCacheHits"),
+                           ((AutoPatternMenu)this.menu).view.getLong("analysisReused")
+                        }
+                     ),
+                     Component.translatable(
+                        "gui.aeautopatterns.analysis.time",
+                        new Object[]{
+                           ((AutoPatternMenu)this.menu).view.getInt("analysisMillis"), ((AutoPatternMenu)this.menu).view.getInt("analysisJeiPending")
+                        }
+                     )
+                  )
+               );
+               String diagnostics = ((AutoPatternMenu)this.menu).view.getString("analysisAdapterDiagnostics");
+               if (!diagnostics.isEmpty()) {
+                  detailsx.add(Component.literal(diagnostics));
+               }
+
+               g.renderTooltip(this.font, detailsx, Optional.empty(), mx, my);
+            }
+
+            if (this.substitutions.isHovered()) {
+               g.renderTooltip(this.font, this.substitutions.getTooltipMessage(), Optional.empty(), mx, my);
+            }
+
+            if (this.fluidSubstitutions.isHovered()) {
+               g.renderTooltip(this.font, this.fluidSubstitutions.getTooltipMessage(), Optional.empty(), mx, my);
+            }
+
+            if (this.processing.isHovered()) {
+               g.renderTooltip(this.font, List.of(this.tr("processing.help"), this.tr("processing.fuel")), Optional.empty(), mx, my);
+            }
+
+            if (this.ignoreComponents.isHovered()) {
+               this.renderIssueTooltip(g, List.of(this.tr("ignore_components.help"), this.tr("ignore_components.trim")), mx, my);
+            }
+
+            if (this.autoUpload.isHovered()) {
+               g.renderTooltip(this.font, List.of(this.tr("upload.help")), Optional.empty(), mx, my);
+            }
+
+            if (this.uploadTarget.isHovered()) {
+               g.renderTooltip(
+                  this.font,
+                  List.of(
+                     Component.translatable(
+                        "gui.aeautopatterns.providers.summary",
+                        new Object[]{
+                           ((AutoPatternMenu)this.menu).view.getInt("selectedProviderCount"),
+                           ((AutoPatternMenu)this.menu).view.getInt("selectedOnlineProviders")
+                        }
+                     ),
+                     Component.translatable(
+                        "gui.aeautopatterns.providers.free_total", new Object[]{((AutoPatternMenu)this.menu).view.getInt("uploadFreeSlots")}
+                     ),
+                     Component.literal(((AutoPatternMenu)this.menu).view.getString("uploadStatus"))
+                  ),
+                  Optional.empty(),
+                  mx,
+                  my
+               );
+            }
+
+            if (this.search.isHovered() && JeiCompat.available()) {
+               g.renderTooltip(this.font, this.tr("search.jei_drop"), mx, my);
+            }
+
+            if (mx >= this.leftPos + 8
+               && mx < this.leftPos + 378
+               && my >= this.topPos + 259
+               && my < this.topPos + 270
+               && !((AutoPatternMenu)this.menu).view.getString("error").isEmpty()) {
+               this.renderIssueTooltip(g, this.issueTooltip(), mx, my);
+            }
+
+            if (!this.pendingInline()
+               && this.search.getValue().isBlank()
+               && mx >= this.leftPos + 8
+               && mx < this.leftPos + 198
+               && my >= this.topPos + 34
+               && my < this.topPos + 106) {
+               int rowx = (my - this.topPos - 34) / 18;
+               ListTag rows = ((AutoPatternMenu)this.menu).view.getList("rows", 10);
+               if (rowx < rows.size()) {
+                  CompoundTag r = rows.getCompound(rowx);
+                  ArrayList<Component> detailsx = new ArrayList<>();
+                  detailsx.add(Component.literal(r.getString("name") + " — " + this.rowStatus(r)));
+                  if (((AutoPatternMenu)this.menu).view.getString("state").equals("ERROR")) {
+                     detailsx.addAll(this.issueTooltip());
+                  }
+
+                  this.renderIssueTooltip(g, detailsx, mx, my);
+               }
+            }
+
+            if (this.recipe.isHovered() && !((AutoPatternMenu)this.menu).view.getString("recipe").isEmpty()) {
+               ArrayList<Component> detailsx = new ArrayList<>();
+               detailsx.add(Component.literal(((AutoPatternMenu)this.menu).view.getString("recipe")));
+               if (!((AutoPatternMenu)this.menu).view.getString("adapterId").isEmpty()) {
+                  detailsx.add(Component.literal("Adapter: " + ((AutoPatternMenu)this.menu).view.getString("adapterId")));
+               }
+
+               if (!((AutoPatternMenu)this.menu).view.getString("machineType").isEmpty()) {
+                  detailsx.add(Component.literal("Machine: " + ((AutoPatternMenu)this.menu).view.getString("machineType")));
+               }
+
+               if (!((AutoPatternMenu)this.menu).view.getString("conditions").isEmpty()) {
+                  detailsx.add(Component.literal(((AutoPatternMenu)this.menu).view.getString("conditions")));
+               }
+
+               if (((AutoPatternMenu)this.menu).view.getInt("probabilisticOutputs") > 0) {
+                  detailsx.add(Component.literal("Probabilistic outputs: " + ((AutoPatternMenu)this.menu).view.getInt("probabilisticOutputs")));
+               }
+
+               g.renderTooltip(this.font, detailsx.stream().map(Component::getVisualOrderText).toList(), mx, my);
+            }
+
+            if (this.picker.open()) {
+               this.picker.render(g, mx, my, partial, this.width, this.height);
+            }
+         }
+      }
+   }
+
+   public boolean mouseClicked(double mx, double my, int button) {
+      if (this.providers != null) {
+         return this.providers.click(mx, my, button);
+      } else if (this.ingredients.open()) {
+         return this.ingredients.click(mx, my, button);
+      } else if (this.picker.open()) {
+         return this.picker.click(mx, my, button);
+      } else if (this.tree != null) {
+         return this.tree.mouseClicked(mx, my, button);
+      } else {
+         int scrollCount = this.search.getValue().isBlank() ? ((AutoPatternMenu)this.menu).view.getInt("rowCount") : this.results.size();
+         if (button == 0
+            && !this.pendingInline()
+            && scrollCount > 4
+            && mx >= (double)(this.leftPos + 194)
+            && mx < (double)(this.leftPos + 200)
+            && my >= (double)(this.topPos + 34)
+            && my < (double)(this.topPos + 106)) {
+            int thumb = Math.max(8, 288 / scrollCount);
+            int offset = this.search.getValue().isBlank() ? ((AutoPatternMenu)this.menu).view.getInt("scrollOffset") : this.searchOffset;
+            int thumbY = this.topPos + 34 + (72 - thumb) * offset / (scrollCount - 4);
+            this.rowDragGrab = my >= (double)thumbY && my < (double)(thumbY + thumb) ? my - (double)thumbY : (double)thumb / 2.0;
+            this.draggingRows = true;
+            this.draggingSearch = !this.search.getValue().isBlank();
+            this.rowDragOffset = offset;
+            this.rowDragRevision = ((AutoPatternMenu)this.menu).view.getInt("revision");
+            this.search.setFocused(false);
+            this.dragRowsTo(my);
             return true;
-        }
-        if(button==0&&mx>=leftPos+8&&mx<leftPos+378&&my>=topPos+259&&my<topPos+270&&!menu.view.getString("issueMaterial").isEmpty()) {
-            send("issue",0,"");return true;
-        }
-        if(button==0&&mx>=leftPos+8&&mx<leftPos+198&&my>=topPos+ROW_TOP&&my<topPos+ROW_BOTTOM) {
-            int row=((int)my-topPos-ROW_TOP)/ROW_HEIGHT;
-            if(!search.getValue().isBlank()) {
-                if(searchOffset+row<results.size()) {send("target",0,BuiltInRegistries.ITEM.getKey(results.get(searchOffset+row)).toString());search.setValue("");}
-                return true;
+         } else if (this.pendingWidth <= 0 && !this.pendingInline()
+            || !this.pendingSelectAll.mouseClicked(mx, my, button) && !this.pendingMakeExternal.mouseClicked(mx, my, button)) {
+            int pendingRow = this.pendingRowAt(mx, my);
+            if (button == 0 && pendingRow >= 0) {
+               ListTag rows = ((AutoPatternMenu)this.menu).view.getList("pendingRows", 10);
+               if (pendingRow < rows.size()) {
+                  CompoundTag row = rows.getCompound(pendingRow);
+                  if (this.pendingCheckboxAt(mx, my)) {
+                     int id = row.getInt("id");
+                     if (!this.pendingSelection.remove(id)) {
+                        this.pendingSelection.add(id);
+                     }
+                  } else {
+                     this.send(row.getBoolean("unresolved") ? "locate_material" : "select", row.getInt("id"), "");
+                  }
+               }
+
+               return true;
+            } else if (button == 0
+               && mx >= (double)(this.leftPos + 8)
+               && mx < (double)(this.leftPos + 378)
+               && my >= (double)(this.topPos + 259)
+               && my < (double)(this.topPos + 270)
+               && !((AutoPatternMenu)this.menu).view.getString("issueMaterial").isEmpty()) {
+               this.send("issue", 0, "");
+               return true;
+            } else {
+               if (button == 0
+                  && mx >= (double)(this.leftPos + 8)
+                  && mx < (double)(this.leftPos + 198)
+                  && my >= (double)(this.topPos + 34)
+                  && my < (double)(this.topPos + 106)) {
+                  int row = ((int)my - this.topPos - 34) / 18;
+                  if (!this.search.getValue().isBlank()) {
+                     if (this.searchOffset + row < this.results.size()) {
+                        this.send("target", 0, BuiltInRegistries.ITEM.getKey(this.results.get(this.searchOffset + row)).toString());
+                        this.search.setValue("");
+                     }
+
+                     return true;
+                  }
+
+                  ListTag rows = ((AutoPatternMenu)this.menu).view.getList("rows", 10);
+                  if (row < rows.size()) {
+                     CompoundTag r = rows.getCompound(row);
+                     this.send(mx < (double)(this.leftPos + 20 + Math.min(4, r.getInt("depth")) * 7) ? "expand" : "select", r.getInt("id"), "");
+                     return true;
+                  }
+               }
+
+               return super.mouseClicked(mx, my, button);
             }
-            var rows=menu.view.getList("rows",Tag.TAG_COMPOUND);
-            if(row<rows.size()) {
-                var r=rows.getCompound(row);
-                send(mx<leftPos+20+Math.min(4,r.getInt("depth"))*7?"expand":"select",r.getInt("id"),"");
-                return true;
-            }
-        }
-        return super.mouseClicked(mx,my,button);
-    }
-    @Override public boolean mouseScrolled(double mx,double my,double horizontal,double vertical) {
-        if(providers!=null)return providers.scroll(vertical);
-        if(ingredients.open()||picker.open())return true;
-        if(tree!=null)return tree.mouseScrolled(mx,my,vertical);
-        if(pendingRowAt(mx,my)>=0) {
-            if(vertical!=0)send("pending_scroll",vertical>0?-1:1,pendingWidth==0?"compact":"wide");
+         } else {
             return true;
-        }
-        if(mx>=leftPos+8&&mx<leftPos+198&&my>=topPos+ROW_TOP&&my<topPos+ROW_BOTTOM) {
-            if(vertical!=0) {
-                if(search.getValue().isBlank())send("scroll",vertical>0?-1:1,"");
-                else {
-                    searchOffset=Math.max(0,Math.min(Math.max(0,results.size()-AutoPatternMenu.VISIBLE_ROWS),searchOffset+(vertical>0?-1:1)));
-                }
+         }
+      }
+   }
+
+   public boolean mouseScrolled(double mx, double my, double horizontal, double vertical) {
+      if (this.providers != null) {
+         return this.providers.scroll(vertical);
+      } else if (this.ingredients.open() || this.picker.open()) {
+         return true;
+      } else if (this.tree != null) {
+         return this.tree.mouseScrolled(mx, my, vertical);
+      } else if (mx >= (double)(this.leftPos + 8) && mx < (double)(this.leftPos + 170)
+            && my >= (double)(this.topPos + 162) && my < (double)(this.topPos + 216)) {
+         if (vertical != 0.0) {
+            int delta = vertical > 0.0 ? -1 : 1;
+            ((AutoPatternMenu)this.menu).setOutputScrollOffset(((AutoPatternMenu)this.menu).outputScrollOffset() + delta);
+            this.send("output_scroll", delta, "");
+         }
+         return true;
+      } else if (this.pendingRowAt(mx, my) >= 0) {
+         if (vertical != 0.0) {
+            this.send("pending_scroll", vertical > 0.0 ? -1 : 1, this.pendingWidth == 0 ? "compact" : "wide");
+         }
+
+         return true;
+      } else if (mx >= (double)(this.leftPos + 8) && mx < (double)(this.leftPos + 198) && my >= (double)(this.topPos + 34) && my < (double)(this.topPos + 106)) {
+         if (vertical != 0.0) {
+            if (this.search.getValue().isBlank()) {
+               this.send("scroll", vertical > 0.0 ? -1 : 1, "");
+            } else {
+               this.searchOffset = Math.max(0, Math.min(Math.max(0, this.results.size() - 4), this.searchOffset + (vertical > 0.0 ? -1 : 1)));
             }
+         }
+
+         return true;
+      } else {
+         return super.mouseScrolled(mx, my, horizontal, vertical);
+      }
+   }
+
+   protected boolean hasClickedOutside(double mx, double my, int x, int y, int button) {
+      return this.pendingWidth > 0
+            && mx >= (double)(this.leftPos - this.pendingWidth - 6)
+            && mx < (double)(this.leftPos - 6)
+            && my >= (double)(this.topPos + 20)
+            && my < (double)(this.topPos + 238)
+         ? false
+         : super.hasClickedOutside(mx, my, x, y, button);
+   }
+
+   private void closeTree() {
+      this.tree = null;
+      this.send("tree_close", 0, "");
+   }
+
+   private void closeProviders() {
+      this.providers = null;
+      this.send("providers_close", 0, "");
+   }
+
+   public void onClose() {
+      if (this.ingredients.open()) {
+         this.ingredients.close();
+      } else if (this.providers != null) {
+         this.closeProviders();
+      } else if (this.picker.open()) {
+         this.picker.close();
+      } else if (this.tree != null) {
+         this.closeTree();
+      } else {
+         super.onClose();
+      }
+   }
+
+   public boolean charTyped(char character, int mods) {
+      if (this.providers != null) {
+         return this.providers.character(character, mods);
+      } else if (this.ingredients.open()) {
+         this.ingredients.character(character, mods);
+         return true;
+      } else if (this.picker.open()) {
+         return true;
+      } else {
+         return this.tree != null ? this.tree.charTyped(character, mods) : super.charTyped(character, mods);
+      }
+   }
+
+   public boolean mouseDragged(double mx, double my, int button, double dx, double dy) {
+      if (this.providers != null) {
+         return true;
+      } else if (this.draggingRows && button == 0) {
+         this.dragRowsTo(my);
+         return true;
+      } else if (!this.ingredients.open() && !this.picker.open()) {
+         return this.tree != null ? this.tree.mouseDragged(dx, dy) : super.mouseDragged(mx, my, button, dx, dy);
+      } else {
+         return true;
+      }
+   }
+
+   public boolean mouseReleased(double mx, double my, int button) {
+      if (this.providers != null) {
+         return true;
+      } else if (this.draggingRows && button == 0) {
+         this.dragRowsTo(my);
+         this.draggingRows = false;
+         return true;
+      } else if (!this.ingredients.open() && !this.picker.open()) {
+         return this.tree != null ? this.tree.mouseReleased() : super.mouseReleased(mx, my, button);
+      } else {
+         return true;
+      }
+   }
+
+   private void dragRowsTo(double mouseY) {
+      if (this.tree == null
+         && !this.ingredients.open()
+         && !this.picker.open()
+         && !this.pendingInline()
+         && this.draggingSearch == !this.search.getValue().isBlank()
+         && this.rowDragRevision == ((AutoPatternMenu)this.menu).view.getInt("revision")) {
+         int count = this.draggingSearch ? this.results.size() : ((AutoPatternMenu)this.menu).view.getInt("rowCount");
+         int max = Math.max(0, count - 4);
+         if (max == 0) {
+            this.draggingRows = false;
+         } else {
+            int thumb = Math.max(8, 288 / count);
+            double fraction = (mouseY - (double)this.topPos - 34.0 - this.rowDragGrab) / (double)(72 - thumb);
+            int offset = (int)Math.round(Math.max(0.0, Math.min(1.0, fraction)) * (double)max);
+            if (offset != this.rowDragOffset) {
+               this.rowDragOffset = offset;
+               if (this.draggingSearch) {
+                  this.searchOffset = offset;
+               } else {
+                  this.send("scroll_to", offset, "");
+               }
+            }
+         }
+      } else {
+         this.draggingRows = false;
+      }
+   }
+
+   public boolean keyPressed(int key, int scan, int mods) {
+      if (this.providers != null) {
+         this.providers.key(key, scan, mods);
+         return true;
+      } else if (this.ingredients.open()) {
+         this.ingredients.key(key, scan, mods);
+         return true;
+      } else if (this.picker.open()) {
+         if (key == 256) {
+            this.picker.close();
+         }
+
+         return true;
+      } else if (this.tree != null) {
+         if (key == 256) {
+            if (!this.tree.dismissSelection()) {
+               this.closeTree();
+            }
+
             return true;
-        }
-        return super.mouseScrolled(mx,my,horizontal,vertical);
-    }
-    @Override protected boolean hasClickedOutside(double mx,double my,int x,int y,int button) {
-        if(pendingWidth>0&&mx>=leftPos-pendingWidth-6&&mx<leftPos-6&&my>=topPos+20&&my<topPos+238)return false;
-        return super.hasClickedOutside(mx,my,x,y,button);
-    }
-    private void closeTree() {tree=null;send("tree_close",0,"");}
-    private void closeProviders() {providers=null;send("providers_close",0,"");}
-    @Override public void onClose() {if(ingredients.open())ingredients.close();else if(providers!=null)closeProviders();else if(picker.open())picker.close();else if(tree!=null)closeTree();else super.onClose();}
-    @Override public boolean charTyped(char character,int mods) {
-        if(providers!=null)return providers.character(character,mods);
-        if(ingredients.open()){ingredients.character(character,mods);return true;}
-        if(picker.open())return true;
-        return tree!=null?tree.charTyped(character,mods):super.charTyped(character,mods);
-    }
-    @Override public boolean mouseDragged(double mx,double my,int button,double dx,double dy) {
-        if(providers!=null)return true;
-        if(draggingRows&&button==0){dragRowsTo(my);return true;}
-        if(ingredients.open()||picker.open())return true;
-        return tree!=null?tree.mouseDragged(dx,dy):super.mouseDragged(mx,my,button,dx,dy);
-    }
-    @Override public boolean mouseReleased(double mx,double my,int button) {
-        if(providers!=null)return true;
-        if(draggingRows&&button==0){dragRowsTo(my);draggingRows=false;return true;}
-        if(ingredients.open()||picker.open())return true;
-        return tree!=null?tree.mouseReleased():super.mouseReleased(mx,my,button);
-    }
-    private void dragRowsTo(double mouseY) {
-        if(tree!=null||ingredients.open()||picker.open()||pendingInline()||draggingSearch!=!search.getValue().isBlank()
-            ||rowDragRevision!=menu.view.getInt("revision")) {draggingRows=false;return;}
-        int count=draggingSearch?results.size():menu.view.getInt("rowCount");
-        int max=Math.max(0,count-AutoPatternMenu.VISIBLE_ROWS);
-        if(max==0){draggingRows=false;return;}
-        int thumb=Math.max(8,72*AutoPatternMenu.VISIBLE_ROWS/count);
-        double fraction=(mouseY-topPos-ROW_TOP-rowDragGrab)/(72-thumb);
-        int offset=(int)Math.round(Math.max(0,Math.min(1,fraction))*max);
-        if(offset==rowDragOffset)return;
-        rowDragOffset=offset;
-        if(draggingSearch)searchOffset=offset;else send("scroll_to",offset,"");
-    }
-    @Override public boolean keyPressed(int key,int scan,int mods) {
-        if(providers!=null){providers.key(key,scan,mods);return true;}
-        if(ingredients.open()){ingredients.key(key,scan,mods);return true;}
-        if(picker.open()){if(key==256)picker.close();return true;}
-        if(tree!=null) {if(key==256){if(!tree.dismissSelection())closeTree();return true;}return tree.keyPressed(key,scan,mods);}
-        if(search.isFocused()&&key!=256)return search.keyPressed(key,scan,mods)||search.canConsumeInput();
-        return super.keyPressed(key,scan,mods);
-    }
+         } else {
+            return this.tree.keyPressed(key, scan, mods);
+         }
+      } else {
+         return this.search.isFocused() && key != 256
+            ? this.search.keyPressed(key, scan, mods) || this.search.canConsumeInput()
+            : super.keyPressed(key, scan, mods);
+      }
+   }
 }

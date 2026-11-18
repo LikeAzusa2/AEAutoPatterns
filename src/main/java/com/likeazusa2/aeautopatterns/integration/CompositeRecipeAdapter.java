@@ -82,6 +82,25 @@ public final class CompositeRecipeAdapter implements RecipeAdapter {
         if(failedOutputs.contains(output))return true;
         return delegates.stream().filter(a->!disabled.contains(a)).anyMatch(a -> {try{return a.unsupported(output);}catch(RuntimeException ex){failed(a,"unsupported",ex);return true;}});
     }
+    @Override public List<PatternRecipe> processingRecipes() {
+        if(indexed.size()!=delegates.size())return List.of();
+        var unique = new LinkedHashMap<String,PatternRecipe>();
+        for(var adapter:delegates) {
+            if(disabled.contains(adapter))continue;
+            long started=System.nanoTime();
+            try {
+                for(var recipe:adapter.processingRecipes()) {
+                    var adapted=recipe.adapted();
+                    String id=adapted!=null?adapted.recipeId().toString()
+                            :recipe.recipe()!=null?recipe.recipe().id().toString()
+                            :adapter.adapterId()+":"+unique.size();
+                    unique.putIfAbsent(id,recipe);
+                }
+            } catch(RuntimeException ex) {failed(adapter,"processingRecipes",ex);}
+            finally {record(adapter,"processingRecipes",started);}
+        }
+        return List.copyOf(unique.values());
+    }
     @Override public ItemStack encode(PatternRecipe recipe, List<AEKey> inputs, AEKey expected, Level level) {
         if (recipe.adapter() == null) throw new IllegalStateException("Pattern has no encoder");
         return recipe.adapter().encode(recipe, inputs, expected, level);

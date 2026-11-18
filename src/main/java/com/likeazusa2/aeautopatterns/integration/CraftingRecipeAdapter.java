@@ -62,7 +62,11 @@ public final class CraftingRecipeAdapter implements RecipeAdapter {
     @Override public Set<AdapterCapability> capabilities() {
         var result=EnumSet.of(AdapterCapability.ITEMS,AdapterCapability.ALTERNATIVES,AdapterCapability.VALIDATION);
         if(substituteFluids) result.add(AdapterCapability.FLUIDS);
+        if(processing!=null) result.add(AdapterCapability.AE_PROCESSING_ENCODING);
         return Set.copyOf(result);
+    }
+    @Override public List<PatternRecipe> processingRecipes() {
+        return processing==null?List.of():processing.processingRecipes();
     }
     public boolean unsupported(AEKey key) {
         return unsupported.contains(key) || key instanceof AEItemKey item

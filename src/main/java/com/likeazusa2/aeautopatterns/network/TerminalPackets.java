@@ -79,7 +79,7 @@ public final class TerminalPackets {
         @Override public Type<? extends CustomPacketPayload> type(){return TYPE;}
     }
     public static void register(RegisterPayloadHandlersEvent event) {
-        var r=event.registrar("4");
+        var r=event.registrar("5");
         r.playBidirectional(JeiBatch.TYPE,JeiBatch.CODEC,new net.neoforged.neoforge.network.handling.DirectionalPayloadHandler<>(
             (p,c)->c.enqueueWork(()->{if(!p.response())com.likeazusa2.aeautopatterns.client.JeiCompat.enqueue(p);}),
             (p,c)->c.enqueueWork(()->{

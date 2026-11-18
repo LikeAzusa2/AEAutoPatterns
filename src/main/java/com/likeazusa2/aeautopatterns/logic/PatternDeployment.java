@@ -15,6 +15,7 @@ public final class PatternDeployment {
     public record Target(int index, PatternContainer container, String name, int freeSlots, long sortOrder) {}
     public enum Result { INSERTED, DUPLICATE, NO_TARGET, FULL, OFFLINE }
     public record Selection(String id,boolean craftingOnly) {}
+    public record RouteDeployment(Result result, String providerId, String message) {}
     private PatternDeployment() {}
 
     public static List<Target> targets(IGrid grid) {
@@ -104,7 +105,47 @@ public final class PatternDeployment {
         }
         return Result.FULL;
     }
+    /**
+     * Deploys only within one already-resolved route group. Provider ids are tried
+     * in their stored order; continuation to another group is impossible here.
+     */
+    public static RouteDeployment deployOrdered(IGrid grid, List<String> providerIds, boolean autoContinue,
+                                                 ItemStack pattern, net.minecraft.world.level.Level level) {
+        if (grid == null) return new RouteDeployment(Result.OFFLINE, "", "Pattern provider network is offline");
+        if (pattern == null || pattern.isEmpty())
+            return new RouteDeployment(Result.NO_TARGET, "", "No encoded pattern to deploy");
+        var available = new HashMap<String, Target>();
+        for (var target : targets(grid)) available.put(identity(target.container()), target);
+        var ordered = new ArrayList<Target>();
+        if (providerIds != null) {
+            for (var id : providerIds) {
+                var target = available.get(id);
+                if (target != null) ordered.add(target);
+            }
+        }
+        if (ordered.isEmpty())
+            return new RouteDeployment(Result.NO_TARGET, "", "No active provider in this route group");
+        for (var target : ordered) {
+            if (contains(target.container().getTerminalPatternInventory(), pattern))
+                return new RouteDeployment(Result.DUPLICATE, identity(target.container()),
+                    "Pattern already installed");
+        }
+        for (int i = 0; i < ordered.size(); i++) {
+            var target = ordered.get(i);
+            var result = insert(target.container(), pattern);
+            if (result == Result.INSERTED || result == Result.DUPLICATE)
+                return new RouteDeployment(result, identity(target.container()), "");
+            if (result == Result.NO_TARGET || result == Result.OFFLINE) continue;
+            if (!autoContinue)
+                return new RouteDeployment(Result.FULL, identity(target.container()),
+                    "Selected route provider is full");
+        }
+        return new RouteDeployment(Result.FULL,
+            ordered.isEmpty() ? "" : identity(ordered.getLast().container()),
+            "Every provider in this route group is full");
+    }
     private static boolean contains(InternalInventory inv,ItemStack pattern) {
+        if (inv == null) return false;
         for(int i=0;i<inv.size();i++)if(ItemStack.isSameItemSameComponents(inv.getStackInSlot(i),pattern))return true;
         return false;
     }

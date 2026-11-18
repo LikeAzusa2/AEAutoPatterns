@@ -1,2 +1,2 @@
 package com.likeazusa2.aeautopatterns.integration;
-public final class PneumaticCraftRecipeAdapterProvider extends OptionalModProvider { public PneumaticCraftRecipeAdapterProvider(){super("pneumaticcraft","me.desht.pneumaticcraft.","pneumaticcraft:reflective",20);} }
+public final class PneumaticCraftRecipeAdapterProvider extends OptionalModProvider { public PneumaticCraftRecipeAdapterProvider(){super("pneumaticcraft","aeautopatterns:pneumaticcraft-unverified",20);} }

@@ -44,7 +44,11 @@ sourceSets {
     }
 }
 configurations { gameTestImplementation.extendsFrom implementation; gameTestRuntimeOnly.extendsFrom runtimeOnly }
-neoForge { addModdingDependenciesTo(sourceSets.gameTest); mods { aeautopatterns { sourceSet sourceSets.gameTest } } }
+neoForge {
+    addModdingDependenciesTo(sourceSets.test)
+    addModdingDependenciesTo(sourceSets.gameTest)
+    mods { aeautopatterns { sourceSet sourceSets.gameTest } }
+}
 
 def modMetadata = [
     mod_id: mod_id,
