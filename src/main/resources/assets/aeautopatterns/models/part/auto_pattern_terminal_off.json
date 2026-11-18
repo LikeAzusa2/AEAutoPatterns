@@ -1,8 +1,82 @@
 {
-  "parent": "ae2:part/display_off",
   "textures": {
     "lightsBright": "aeautopatterns:part/auto_pattern_terminal_bright",
     "lightsMedium": "aeautopatterns:part/auto_pattern_terminal_medium",
-    "lightsDark": "aeautopatterns:part/auto_pattern_terminal_dark"
-  }
+    "lightsDark": "aeautopatterns:part/auto_pattern_terminal_dark",
+    "particle": "#lightsDark"
+  },
+  "elements": [
+    {
+      "from": [
+        2,
+        2,
+        -0.02
+      ],
+      "to": [
+        14,
+        14,
+        0.19
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ],
+          "texture": "#lightsBright",
+          "tintindex": 3
+        }
+      }
+    },
+    {
+      "from": [
+        2,
+        2,
+        0
+      ],
+      "to": [
+        14,
+        14,
+        2
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ],
+          "texture": "#lightsMedium",
+          "tintindex": 2
+        }
+      }
+    },
+    {
+      "from": [
+        2,
+        2,
+        0
+      ],
+      "to": [
+        14,
+        14,
+        2
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ],
+          "texture": "#lightsDark",
+          "tintindex": 1
+        }
+      }
+    }
+  ]
 }

@@ -9,7 +9,7 @@ import com.likeazusa2.aeautopatterns.ModContent;
 public final class ClientEvents {
     @SubscribeEvent public static void keys(net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent e) { e.register(TerminalGuide.OPEN); }
     @SubscribeEvent public static void itemColors(net.neoforged.neoforge.client.event.RegisterColorHandlersEvent.Item e) {
-        e.register((stack,tint)->appeng.api.util.AEColor.TRANSPARENT.getVariantByTintIndex(tint),ModContent.TERMINAL.get());
+        e.register((stack,tint)->0xFF000000 | appeng.api.util.AEColor.TRANSPARENT.getVariantByTintIndex(tint),ModContent.TERMINAL.get());
     }
     @SubscribeEvent public static void screens(RegisterMenuScreensEvent e) { e.register(ModContent.TERMINAL_MENU.get(),AutoPatternScreen::new); }
 }
